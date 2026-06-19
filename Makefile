@@ -42,12 +42,26 @@ C_OBJS    := $(patsubst src/%.c,$(BUILD_DIR)/obj/%.o,$(C_SRCS))
 MM_OBJS   := $(patsubst src/%.mm,$(BUILD_DIR)/obj/%.o,$(MM_SRCS))
 OBJS      := $(C_OBJS) $(MM_OBJS)
 
-.PHONY: all run clean
+ICON_SRC  := icon.png
+ICNS      := $(BUILD_DIR)/AppIcon.icns
+ICON_SIZES := 16 32 128 256 512
+
+.PHONY: all run run-direct clean install
 all: $(APP_DIR)
 
-$(APP_DIR): $(BIN) Info.plist
-	@mkdir -p $(APP_DIR)/Contents
+# App icon: build a multi-size .icns from icon.png (only when it changes).
+$(ICNS): $(ICON_SRC)
+	@rm -rf $(BUILD_DIR)/AppIcon.iconset && mkdir -p $(BUILD_DIR)/AppIcon.iconset
+	@for s in $(ICON_SIZES); do \
+		sips -z $$s $$s $(ICON_SRC) --out $(BUILD_DIR)/AppIcon.iconset/icon_$${s}x$${s}.png >/dev/null; \
+		d=$$((s*2)); sips -z $$d $$d $(ICON_SRC) --out $(BUILD_DIR)/AppIcon.iconset/icon_$${s}x$${s}@2x.png >/dev/null; \
+	done
+	@iconutil -c icns $(BUILD_DIR)/AppIcon.iconset -o $@
+
+$(APP_DIR): $(BIN) Info.plist $(ICNS)
+	@mkdir -p $(APP_DIR)/Contents/Resources
 	@cp Info.plist $(APP_DIR)/Contents/Info.plist
+	@cp $(ICNS) $(APP_DIR)/Contents/Resources/AppIcon.icns
 	@echo "APPL????" > $(APP_DIR)/Contents/PkgInfo
 	@echo "Built $(APP_DIR)"
 
@@ -73,6 +87,15 @@ run: all
 
 run-direct: all
 	$(BIN)
+
+# Install into /Applications (override with `make install INSTALL_DIR=~/Applications`).
+INSTALL_DIR ?= /Applications
+install: all
+	@mkdir -p "$(INSTALL_DIR)"
+	rm -rf "$(INSTALL_DIR)/John Video.app"
+	cp -R $(APP_DIR) "$(INSTALL_DIR)/John Video.app"
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALL_DIR)/John Video.app" 2>/dev/null || true
+	@echo "Installed to $(INSTALL_DIR)/John Video.app"
 
 clean:
 	rm -rf $(BUILD_DIR)

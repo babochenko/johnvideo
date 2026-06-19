@@ -37,6 +37,7 @@ static const CGFloat kRulerHeight = 18.0;
 - (jv_clip *)selectedClip;                              // primary selection
 - (void)toggleSelectClip:(jv_clip *)c;                  // cmd+click multi-select
 - (void)extendSelectionTo:(jv_clip *)c;                 // shift+click range select
+- (void)selectAllClips;                                 // cmd+a
 - (BOOL)isClipSelected:(jv_clip *)c;
 - (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta;  // horizontal move-together
 - (void)shiftSelectionTracksBy:(int)delta;                   // vertical move-together

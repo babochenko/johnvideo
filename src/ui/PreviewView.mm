@@ -214,7 +214,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 
     // If a clip is selected, check its resize/rotate handles first.
     jv_clip *sel = [self.host selectedClip];
-    if (sel && [self clipIsVisual:sel]) {
+    if (sel && [self clipIsVisual:sel] && [self clipActive:sel]) {
         if (pt_dist(p, [self rotateHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_ROTATE; return; }
         if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_RESIZE; return; }
     }
@@ -228,12 +228,20 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         _mode = PV_MOVE;
         [self.host refreshAll];
     } else {
+        [self.host selectTrack:NULL clip:NULL];   // clicking empty canvas deselects
         _mode = PV_NONE;
+        [self.host refreshAll];
     }
 }
 
 - (BOOL)clipIsVisual:(jv_clip *)c {
     return c->type == JV_CLIP_IMAGE || c->type == JV_CLIP_TEXT || c->type == JV_CLIP_VIDEO;
+}
+
+// Is the clip on screen at the current playhead?
+- (BOOL)clipActive:(jv_clip *)c {
+    double t = [self.host playhead];
+    return c && t >= c->start_time && t < c->start_time + c->duration;
 }
 
 - (void)mouseDragged:(NSEvent *)e {
@@ -287,9 +295,9 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     }
     free(rgba);
 
-    // Selection outline + resize/rotate handles.
+    // Selection outline + resize/rotate handles — only when the clip is visible now.
     jv_clip *sel = [self.host selectedClip];
-    if (sel && [self clipIsVisual:sel]) {
+    if (sel && [self clipIsVisual:sel] && [self clipActive:sel]) {
         NSRect r = [self displayRectForClip:sel];
         NSPoint mid = NSMakePoint(NSMidX(r), NSMidY(r));
         NSGraphicsContext *gctx = [NSGraphicsContext currentContext];
@@ -320,7 +328,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     }
 
     // Text-edit caret (+ select-all highlight) on the edited clip.
-    if (_editing && _editClip) {
+    if (_editing && _editClip && [self clipActive:_editClip]) {
         NSRect r = [self displayRectForClip:_editClip];
         if (_editSelAll) {
             [[NSColor colorWithSRGBRed:0.3 green:0.5 blue:1 alpha:0.35] setFill];
@@ -482,6 +490,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
     if (m & NSEventModifierFlagCommand) {
+        if (lk == 'a') { [self.host selectAllClips]; return; }        // select all clips
         if (lk == 'h') { [self.host nudgeSelectedBy:-0.5]; return; }   // move object
         if (lk == 'l') { [self.host nudgeSelectedBy:0.5];  return; }
         if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }

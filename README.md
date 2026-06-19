@@ -36,7 +36,7 @@ This guarantees the preview matches the export.
 |---|---|
 | UI shell | AppKit (Objective-C++) |
 | Preview canvas | Core Graphics / NSImage (non-flipped view, top-down RGBA) |
-| Text rendering | Core Text (rasterized to RGBA) + in-place `NSTextField` editor |
+| Text rendering | Core Text (rasterized to RGBA); in-place editor captures keystrokes directly (own caret), no `NSTextField` |
 | Clipboard / drag-drop | NSPasteboard / NSDraggingDestination |
 | Still images | ImageIO |
 | Remote URL drops | NSURLSession |
@@ -55,6 +55,10 @@ This guarantees the preview matches the export.
 - **Export is lossless** (H.264 CRF 0) for source quality.
 - **Undo/redo via deep-clone snapshots** of the whole timeline (`jv_timeline_clone`), recorded before each mutation.
 - **Project file is plain text** (`.jvp`), git-trackable; path-less media (pasted images, recordings) saved to a sibling `<file>.assets/` folder.
+- **Selection is a per-clip flag**, not a pointer set — it travels with the struct through array moves/reallocs/clones, which makes group move/copy safe.
+- **In-place text editing captures keystrokes directly** (the preview is first responder) with its own caret — an overlaid `NSTextField` proved unreliable.
+- **Makefile tracks header dependencies** (`-MMD -MP`): editing a header rebuilds every object that includes it. (Without this, fields added mid-struct left stale objects with mismatched layouts → heap corruption.)
+- The on-disk bundle is `johnvideo.app`; the **display name is "John Video"** (Info.plist + window title + menu).
 
 ---
 
@@ -122,10 +126,12 @@ Clip     { type, start_time, duration, in_offset, union payload }
 ## Features
 
 - **Images** — paste (Cmd+V), drag-drop from Finder or a **browser** (file URL / raw bytes / http URL fetched via NSURLSession), or Import. Decoded to top-down RGBA via ImageIO.
-- **Text** — inserted **immediately** (no popup) and edited **in place on the preview with a cursor** (overlaid `NSTextField`); edits reflect live in the timeline clip label. Right-click "Add Text", press **t**, or **double-click** the canvas / a text clip.
+- **Text** — inserted **immediately** (no popup) and edited **in place on the preview** with a real caret; edits reflect live in the timeline clip label. Multiline (Return), full caret navigation (arrows), and clipboard (Cmd+A/C/X/V) while editing. Right-click "Add Text", press **t**, or **double-click** the canvas / a text clip.
 - **Video** — imported and composited; a C decoder seeks and decodes forward to the playhead time, swscale → RGBA → CGImage. The video's embedded audio is imported onto an audio track.
 - **Audio** — multiple tracks; **voiceover recording** against the playhead; **music import**. Waveforms drawn on clips.
-- **Export** — composites all visual tracks + mixes all audio, encodes **H.264 (CRF 0, lossless) + AAC**, muxes to MP4. Runs on a background queue with a progress sheet.
+- **Export** — composites all visual tracks + mixes all audio, encodes **H.264 (CRF 0, lossless) + AAC**, muxes to MP4. Runs on a background queue; a bottom-right toast shows a live elapsed timer, then the result with time taken and a click-to-open link.
+
+Inserted **image and text clips are 1 s** long. Images (paste **and** Import) and pasted clips drop **after the last clip on the target track**, so repeated inserts line up one after another.
 
 ### Recording (voiceover)
 - Hit **● Rec** → mic permission prompt (first time) → capture starts; the playhead advances from the capture clock.
@@ -141,9 +147,10 @@ Clip     { type, start_time, duration, in_offset, union payload }
 | Space | Play / stop (▶/⏸). At the end it holds on the last frame; pressing play again restarts from the start |
 | ← / → | Move the playhead ∓ 0.5 s (does **not** pause playback — it keeps playing from the new spot) |
 | h / l | Select previous / next clip on the current track (wraps) |
-| j / k | Move focus down / up between tracks (j wraps to top, k to bottom; defaults top/bottom) |
+| j / k | Move focus down / up between tracks (wraps; **skips empty tracks**) |
+| Cmd + A | Select **all** clips on all tracks (then drag or Cmd+h/l to move them together) |
 | Cmd + h / l | Move the selected object(s) ∓ 0.5 s along the timeline |
-| Cmd + ← / → | Jump the playhead through {start, markers…, end} |
+| Cmd + ← / → | Jump the playhead through {start, markers…, end} (without pausing playback) |
 | Ctrl + ← / → , Ctrl + h / l | Jump the playhead to the previous / next marker |
 | m | Add a marker at the playhead |
 | t | Add text at the playhead (enters in-place edit) |
@@ -152,13 +159,14 @@ Clip     { type, start_time, duration, in_offset, union payload }
 | Delete / Backspace | Delete the marker at the playhead, else the selected clip (works on the preview too) |
 | Cmd/Ctrl + C / V | Copy / paste clip (paste falls back to image from clipboard) |
 | Cmd/Ctrl + Z / Shift + Z | Undo / redo |
-| Cmd + S / Cmd + O | Save / Open project (after the first save or an open, Cmd+S saves in place without asking) |
+| Cmd + S / Cmd + O | Save / Open project (after first save/open, Cmd+S saves in place silently) |
+| Cmd + Shift + O | Reveal the current project in Finder |
 
-**Selection**: click a clip to select; **Cmd+click** to toggle multiple into the selection — dragging any of them moves them all together.
+**Selection**: click a clip to select it **and move the playhead to the click point**; clicking empty space **deselects**. **Cmd+click** toggles clips in/out of a multi-selection; **Shift+click** selects the range on that track between the anchor and the click; **Cmd+A** selects everything. Dragging any selected clip moves the whole selection together — horizontally, and vertically across same-kind tracks. The selection is a per-clip flag (survives moves/reallocs/clones); selection chrome only shows while the clip is visible at the playhead.
 
 **Markers**: yellow flags on the timeline, **draggable** to reposition. Add with `m` or right-click the ruler → Add Marker Here; delete with Backspace at the playhead or right-click → Delete Marker; jump with Cmd+←/→ (incl. start/end) or Ctrl+←/→ / Ctrl+h/l; saved in the project (`mark <t>` lines); undoable.
 
-**Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes edit live (reflected on the timeline). It starts with the whole string selected; **Return** inserts a newline (multiline), **Esc** or clicking away commits. Clipboard works while editing: **Cmd+A** select all, **Cmd+C/X** copy/cut, **Cmd+V** paste text, **Backspace** delete. (Implemented by capturing keys directly, not an overlay field.)
+**Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes edit live (reflected on the timeline). It starts with the whole string selected. **←/→** move the caret, **↑/↓** move between lines (keeping column), **Return** inserts a newline (multiline), **Esc** or clicking away commits. Clipboard: **Cmd+A** select all, **Cmd+C/X** copy/cut, **Cmd+V** paste at the caret, **Backspace** delete. Implemented by capturing keys directly (the preview is first responder), not an overlay field — so it's reliable, and arrow keys move the caret instead of being typed in.
 
 **Blade tool**: press **B** to arm (or click the orange Liquid-Glass **Blade** chip, which only appears while armed, to disarm). With it armed, clicking a clip **splits it at the click point**; the cursor becomes a crosshair. Splits are ordinary clips, so they're saved in the project and undoable.
 
@@ -170,13 +178,14 @@ Clip     { type, start_time, duration, in_offset, union payload }
 
 ## Timeline interactions
 
-- **Scrub** by clicking/dragging the ruler or empty lanes; the playhead **snaps** to clip boundaries (and 0).
-- **Move** a clip by dragging; **trim** by dragging either edge (left edge trims into the source). All are **sticky** — they snap to the playhead and to neighbouring clips' edges.
-- **Move between tracks** by dragging a clip vertically onto another same-kind track.
+- **Scrub** by clicking/dragging the ruler or empty lanes; the playhead **snaps** to clip boundaries (and 0). The ruler tick step **auto-scales with zoom** (1s → 2/5/10/15/30s → 1/2/5/10/30/60 min).
+- **Click a clip** to select it and move the playhead to the click point; **click empty space** to deselect.
+- **Move** a clip by dragging; **trim** by dragging either edge (left edge trims into the source). All are **sticky** — they snap to the playhead and to neighbouring clips' edges. A **grabbing cursor** shows while dragging.
+- **Move between tracks** by dragging a clip vertically onto another same-kind track (group-moves all selected).
 - **Reorder tracks** by dragging a track header up/down (video stays above audio).
-- **Zoom**: pinch, or Option/Cmd-scroll, or Ctrl +/-. **Scroll**: horizontal pans time, vertical moves the track list.
-- **Right-click**: on a clip → Delete; on empty lane → Add Text Here; on a track header → Add Video/Audio Track, Delete This Track (**with confirmation** warning that media disappears).
-- **Floating toolbar**: separate rounded Liquid Glass capsule buttons overlay the bottom of the timeline (no reserved space, not movable).
+- **Zoom**: pinch, or Option/Cmd-scroll, or Ctrl +/-. **Scroll**: horizontal pans time, vertical moves the track list. Zoom + scroll + playhead are saved in the project.
+- **Right-click**: on a clip → Delete; on empty lane → Add Text Here; on the ruler → Add/Delete Marker; on a track header → Add Video/Audio Track, **Rename Track…**, Delete This Track (**with confirmation** warning that media disappears).
+- **Floating toolbar**: separate rounded Liquid Glass capsule buttons overlay the bottom of the timeline (no reserved space, not movable). The orange **Blade** chip appears to the left only while the blade tool is armed.
 
 ## Canvas (preview) interactions
 
@@ -193,10 +202,14 @@ Plain text, line-based, git-diff friendly. Hierarchical: clips indented 2 spaces
 ```
 johnvideo 1
 canvas 1280 720 25.0000
+zoom 20.0000
+playhead 1.5000
+scroll 0.0000 0.0000
+mark 3.4631
 track V Video 1
-  clip text start=1.0000 dur=3.0000 in=0.0000 cx=0.5000 cy=0.4000 scale=0.0000 rot=0.3000 font=64.0000 color=0xFFFFFFFF
-    str Hello World
-  clip image start=0.0000 dur=2.0000 in=0.0000 cx=0.3000 cy=0.3000 scale=0.6000 rot=0.0000
+  clip text start=1.0000 dur=1.0000 in=0.0000 cx=0.5000 cy=0.4000 scale=0.0000 rot=0.3000 font=64.0000 color=0xFFFFFFFF
+    str Hello\nWorld
+  clip image start=0.0000 dur=1.0000 in=0.0000 cx=0.3000 cy=0.3000 scale=0.6000 rot=0.0000
     asset project.jvp.assets/img0.png
 
 track A Music
@@ -204,7 +217,10 @@ track A Music
     src /Users/me/music.mp3
 ```
 
-Clip fields are labeled `key=value` and parsed order-independently: `start dur in` for every clip; image/video add `cx cy scale rot`; text adds `font color`; audio adds `gain rate`. Top-level optional lines: `zoom <pps>` (timeline scale) and `mark <t>` (markers).
+- Clip fields are labeled `key=value`, parsed order-independently: `start dur in` for every clip; image/video add `cx cy scale rot`; text adds `font color`; audio adds `gain rate`.
+- Top-level optional lines: `zoom <pps>`, `playhead <t>`, `scroll <x> <y>`, `mark <t>` — so reopening restores the full view state.
+- The `str` value escapes `\` and newlines (`\n`), so **multiline text** stays on one line on disk and round-trips.
+- The per-clip selection flag is transient and **not** saved.
 
 ---
 

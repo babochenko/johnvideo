@@ -17,6 +17,8 @@
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>johnvideo</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>

@@ -301,6 +301,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         if (e.modifierFlags & NSEventModifierFlagShift)   { [self.host extendSelectionTo:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];
         if (![self.host isClipSelected:c]) [self.host selectTrack:t clip:c];   // keep multi-selection if part of it
+        [self.host seekTo:[self timeForX:p.x]];   // move the playhead to the clicked position
         NSRect r = [self rectForClip:c onTrack:idx];
         if (p.x > NSMaxX(r) - 8) {            // right edge => trim end
             _drag = DRAG_TRIM;
@@ -313,6 +314,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         _dragTrack = t; _dragClip = c;
         [self setNeedsDisplay:YES];
     } else {
+        [self.host selectTrack:NULL clip:NULL];   // clicking empty space deselects
         _drag = DRAG_SCRUB;
         [self.host seekTo:[self snapTime:[self timeForX:p.x]]];
     }
@@ -551,6 +553,7 @@ static int cmp_double(const void *a, const void *b) {
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
     if (m & NSEventModifierFlagCommand) {            // Cmd-based shortcuts
+        if (lk == 'a') { [self.host selectAllClips]; return; }        // select all clips
         if (lk == 'h') { [self.host nudgeSelectedBy:-0.5]; return; }   // move object
         if (lk == 'l') { [self.host nudgeSelectedBy:0.5];  return; }
         if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }

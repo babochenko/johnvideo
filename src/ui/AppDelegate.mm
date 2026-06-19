@@ -325,6 +325,15 @@ static const CGFloat kTimelineHeight = 240.0;
 
 - (BOOL)isClipSelected:(jv_clip *)c { return c && c->selected; }
 
+- (void)selectAllClips {
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) t->clips[j].selected = 1;
+    }
+    _selected = [self anySelectedClip];
+    [self refreshAll];
+}
+
 - (void)toggleSelectClip:(jv_clip *)c {
     if (!c) return;
     c->selected = !c->selected;
