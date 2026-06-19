@@ -104,6 +104,10 @@ typedef struct jv_timeline {
 jv_timeline *jv_timeline_create(int width, int height, double fps);
 void         jv_timeline_destroy(jv_timeline *tl);
 
+// Deep copy (owned buffers duplicated; video decoders reopened lazily). Used
+// for undo/redo snapshots.
+jv_timeline *jv_timeline_clone(const jv_timeline *tl);
+
 jv_track *jv_timeline_add_track(jv_timeline *tl, jv_track_kind kind, const char *name);
 
 // Remove a track (and free its clips) by index.

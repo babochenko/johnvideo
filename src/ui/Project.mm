@@ -84,47 +84,48 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
             switch (c->type) {
                 case JV_CLIP_IMAGE: {
                     jv_image *im = &c->u.image;
-                    fprintf(f, "clip image %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                    fprintf(f, "  clip image %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                             c->start_time, c->duration, c->in_offset, im->cx, im->cy, im->scale, im->rotation);
                     BOOL hasFile = im->path && [fm fileExistsAtPath:@(im->path)];
-                    if (hasFile) fprintf(f, "src %s\n", im->path);
+                    if (hasFile) fprintf(f, "    src %s\n", im->path);
                     else {
                         NSString *rel = [NSString stringWithFormat:@"img%d.png", asset++];
                         writePNG(im->rgba, im->width, im->height, [assets stringByAppendingPathComponent:rel]);
-                        fprintf(f, "asset %s/%s\n", assetsName.UTF8String, rel.UTF8String);
+                        fprintf(f, "    asset %s/%s\n", assetsName.UTF8String, rel.UTF8String);
                     }
                     break;
                 }
                 case JV_CLIP_TEXT: {
                     jv_text *tx = &c->u.text;
-                    fprintf(f, "clip text %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f 0x%08X\n",
+                    fprintf(f, "  clip text %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f 0x%08X\n",
                             c->start_time, c->duration, c->in_offset, tx->cx, tx->cy,
                             tx->scale, tx->rotation, tx->font_size, tx->color);
-                    fprintf(f, "str %s\n", tx->string ? tx->string : "");
+                    fprintf(f, "    str %s\n", tx->string ? tx->string : "");
                     break;
                 }
                 case JV_CLIP_VIDEO: {
                     jv_video *v = &c->u.video;
-                    fprintf(f, "clip video %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                    fprintf(f, "  clip video %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                             c->start_time, c->duration, c->in_offset, v->cx, v->cy, v->scale, v->rotation);
-                    if (v->path) fprintf(f, "src %s\n", v->path);
+                    if (v->path) fprintf(f, "    src %s\n", v->path);
                     break;
                 }
                 case JV_CLIP_AUDIO: {
                     jv_audio *a = &c->u.audio;
-                    fprintf(f, "clip audio %.4f %.4f %.4f %.4f %d\n",
+                    fprintf(f, "  clip audio %.4f %.4f %.4f %.4f %d\n",
                             c->start_time, c->duration, c->in_offset, a->gain, a->sample_rate);
                     BOOL hasFile = a->path && [fm fileExistsAtPath:@(a->path)];
-                    if (hasFile) fprintf(f, "src %s\n", a->path);
+                    if (hasFile) fprintf(f, "    src %s\n", a->path);
                     else {
                         NSString *rel = [NSString stringWithFormat:@"aud%d.wav", asset++];
                         writeWAV(a->pcm, a->frames, a->sample_rate, [assets stringByAppendingPathComponent:rel]);
-                        fprintf(f, "asset %s/%s\n", assetsName.UTF8String, rel.UTF8String);
+                        fprintf(f, "    asset %s/%s\n", assetsName.UTF8String, rel.UTF8String);
                     }
                     break;
                 }
             }
         }
+        fprintf(f, "\n");   // blank line after each track (ignored on load)
     }
     fclose(f);
     return YES;

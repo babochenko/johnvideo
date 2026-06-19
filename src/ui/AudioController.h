@@ -19,4 +19,9 @@
 // the captured frame count and sample rate. Returns NULL if nothing recorded.
 - (float *)stopRecordingFrames:(size_t *)outFrames sampleRate:(int *)outSR;
 - (BOOL)isRecording;
+
+// Live access while recording, so the timeline can draw the growing take.
+- (const float *)recordingPCM;
+- (size_t)recordingFrames;
+- (int)recordingSampleRate;
 @end

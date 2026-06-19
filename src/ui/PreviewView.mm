@@ -173,6 +173,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     if (e.clickCount == 2) {
         jv_clip *hit = [self visualClipAtPoint:p];
         if (hit && hit->type == JV_CLIP_TEXT) {
+            [self.host recordUndo];
             [self.host selectTrack:NULL clip:hit];
             [self beginEditingTextClip:hit];
         } else {
@@ -189,12 +190,13 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     // If a clip is selected, check its resize/rotate handles first.
     jv_clip *sel = [self.host selectedClip];
     if (sel && [self clipIsVisual:sel]) {
-        if (pt_dist(p, [self rotateHandleForClip:sel]) < 12) { _dragClip = sel; _mode = PV_ROTATE; return; }
-        if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) { _dragClip = sel; _mode = PV_RESIZE; return; }
+        if (pt_dist(p, [self rotateHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_ROTATE; return; }
+        if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_RESIZE; return; }
     }
 
     _dragClip = [self visualClipAtPoint:p];
     if (_dragClip) {
+        [self.host recordUndo];
         [self.host selectTrack:NULL clip:_dragClip];
         NSPoint mid = [self centerForClip:_dragClip];
         _grab = NSMakePoint(p.x - mid.x, p.y - mid.y);
@@ -373,17 +375,23 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 
 // ---- Paste (Cmd+V) ----
 - (void)keyDown:(NSEvent *)e {
-    if ((e.modifierFlags & NSEventModifierFlagCommand) && [e.charactersIgnoringModifiers isEqualToString:@"v"]) {
-        [self paste:nil];
-    } else {
-        [super keyDown:e];
-    }
+    NSString *chars = e.charactersIgnoringModifiers;
+    unichar k = chars.length ? [chars characterAtIndex:0] : 0;
+    NSEventModifierFlags m = e.modifierFlags;
+    if ((m & NSEventModifierFlagControl) && (k == '=' || k == '+')) { [self.host zoomBy:1.25]; return; }
+    if ((m & NSEventModifierFlagControl) && (k == '-' || k == '_')) { [self.host zoomBy:0.8];  return; }
+    if (k == ' ') { [self.host transportToggle]; return; }
+    if (k == NSLeftArrowFunctionKey  || k == 'h') { [self.host nudgePlayheadBy:-0.5]; return; }
+    if (k == NSRightArrowFunctionKey || k == 'l') { [self.host nudgePlayheadBy:0.5];  return; }
+    if (k == 't') { [self.host addTextAtPlayhead]; return; }
+    [super keyDown:e];
 }
 
 - (void)paste:(id)sender {
-    NSPasteboard *pb = [NSPasteboard generalPasteboard];
-    [self ingestPasteboard:pb atTime:[self.host playhead]];
+    if ([self.host pasteClipAtPlayhead]) return;
+    [self ingestPasteboard:[NSPasteboard generalPasteboard] atTime:[self.host playhead]];
 }
+- (void)copy:(id)sender { [self.host copySelectedClip]; }
 
 // ---- Drag and drop (including from a browser) ----
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)s { return NSDragOperationCopy; }

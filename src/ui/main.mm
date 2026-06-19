@@ -33,6 +33,11 @@ int main(void) {
         NSMenuItem *editItem = [[NSMenuItem alloc] init];
         [menubar addItem:editItem];
         NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+        [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+        NSMenuItem *redo = [editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"z"];
+        redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+        [editMenu addItem:[NSMenuItem separatorItem]];
+        [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
         [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
         [editItem setSubmenu:editMenu];
 

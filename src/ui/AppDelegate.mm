@@ -36,13 +36,12 @@ static const CGFloat kTimelineHeight = 240.0;
 - (void)layout {
     [super layout];
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
+    // Timeline fills the bottom region; preview fills above it. The toolbar is
+    // an overlay that floats over the timeline and takes no layout space.
+    self.timeline.frame = NSMakeRect(0, 0, w, kTimelineHeight);
+    self.preview.frame  = NSMakeRect(0, kTimelineHeight, w, h - kTimelineHeight > 0 ? h - kTimelineHeight : 0);
     CGFloat bw = self.barSize.width, bh = self.barSize.height;
-    CGFloat barY = 12;                                  // glass pill at the bottom
-    self.bar.frame = NSMakeRect((w - bw) / 2, barY, bw, bh);
-    CGFloat tlY = barY + bh + 12;
-    self.timeline.frame = NSMakeRect(0, tlY, w, kTimelineHeight);
-    CGFloat py = tlY + kTimelineHeight;
-    self.preview.frame  = NSMakeRect(0, py, w, h - py > 0 ? h - py : 0);
+    self.bar.frame = NSMakeRect((w - bw) / 2, 10, bw, bh);   // floats, bottom-center
 }
 @end
 
@@ -69,6 +68,12 @@ static const CGFloat kTimelineHeight = 240.0;
     double            _clockHead;       // playhead value when the clock started
     double            _clockWall;       // systemUptime when the clock started
     double            _recStartHead;    // playhead at the moment recording began
+    jv_clip          *_liveRecClip;     // voiceover clip shown growing during recording
+
+    NSMutableArray<NSValue *> *_undo;   // stack of jv_timeline* snapshots
+    NSMutableArray<NSValue *> *_redo;
+    jv_clip            _clipboard;       // copied clip (deep)
+    BOOL               _hasClipboard;
 }
 
 // ---- Setup ----
@@ -82,6 +87,8 @@ static const CGFloat kTimelineHeight = 240.0;
 
     _audio = [[AudioController alloc] init];
     _audio.timeline = _timeline;
+    _undo = [NSMutableArray array];
+    _redo = [NSMutableArray array];
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
     _window = [[NSWindow alloc]
@@ -227,6 +234,7 @@ static const CGFloat kTimelineHeight = 240.0;
 }
 
 - (void)addTrackOfKind:(jv_track_kind)kind {
+    [self recordUndo];
     static int vn = 2, an = 0;
     char name[32];
     if (kind == JV_TRACK_VISUAL) snprintf(name, sizeof name, "Video %d", ++vn);
@@ -238,6 +246,7 @@ static const CGFloat kTimelineHeight = 240.0;
 
 - (void)removeTrackAtIndex:(size_t)index {
     if (index >= _timeline->track_count) return;
+    [self recordUndo];
     // Clear selection if it lived on this track.
     jv_track *t = &_timeline->tracks[index];
     for (size_t j = 0; j < t->clip_count; j++)
@@ -247,6 +256,7 @@ static const CGFloat kTimelineHeight = 240.0;
 }
 
 - (void)addImageData:(NSData *)data path:(NSString *)path atTime:(double)t {
+    [self recordUndo];
     int w = 0, h = 0;
     unsigned char *rgba = data ? jv_rgba_from_bytes(data.bytes, data.length, &w, &h)
                                : jv_rgba_from_file(path.UTF8String, &w, &h);
@@ -265,6 +275,7 @@ static const CGFloat kTimelineHeight = 240.0;
 }
 
 - (void)importMediaPath:(NSString *)path atTime:(double)t {
+    [self recordUndo];
     // Try as a still image first.
     int w = 0, h = 0;
     unsigned char *rgba = jv_rgba_from_file(path.UTF8String, &w, &h);
@@ -316,6 +327,7 @@ static const CGFloat kTimelineHeight = 240.0;
 }
 
 - (void)addTextAtCanvasX:(float)cx y:(float)cy time:(double)t {
+    [self recordUndo];
     // Insert a default text clip immediately; the preview enters in-place edit.
     const char *initial = "Text";
     double fontPx = _timeline->height * 0.06;
@@ -361,6 +373,13 @@ static const CGFloat kTimelineHeight = 240.0;
     _tick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 30.0 repeats:YES block:^(NSTimer *_) {
         double elapsed = NSProcessInfo.processInfo.systemUptime - self->_clockWall;
         self->_playhead = self->_clockHead + elapsed;
+        // Grow the live recording clip in real time.
+        if (self->_liveRecClip && [self->_audio isRecording]) {
+            size_t fr = [self->_audio recordingFrames];
+            int sr = [self->_audio recordingSampleRate];
+            self->_liveRecClip->u.audio.frames = fr;
+            self->_liveRecClip->duration = sr > 0 ? (double)fr / sr : 0;
+        }
         // Stop at the end only while playing back (recording may run past it).
         double dur = jv_timeline_duration(self->_timeline);
         if (self->_transportPlaying && dur > 0 && self->_playhead >= dur) {
@@ -397,6 +416,18 @@ static const CGFloat kTimelineHeight = 240.0;
                 }
                 self->_recStartHead = self->_playhead;   // place the take here on stop
                 [self startClockFrom:self->_playhead];
+                // Live clip on the voiceover track, referencing the capture
+                // buffer so it (and its waveform) grow in real time.
+                jv_track *vo = [self firstTrackOfKind:JV_TRACK_AUDIO];
+                jv_clip *c = jv_track_add_clip(vo, JV_CLIP_AUDIO, self->_recStartHead, 0);
+                c->u.audio.pcm = (float *)[self->_audio recordingPCM];   // borrowed until stop
+                c->u.audio.frames = 0;
+                c->u.audio.sample_rate = [self->_audio recordingSampleRate];
+                c->u.audio.channels = 2;
+                c->u.audio.gain = 1.0f;
+                c->u.audio.path = NULL;
+                self->_liveRecClip = c;
+                [self selectTrack:vo clip:c];
                 self->_recButton.title = @"■ Stop";
                 [self startTick];
             });
@@ -406,23 +437,155 @@ static const CGFloat kTimelineHeight = 240.0;
 
     {
         size_t frames = 0; int sr = 0;
-        float *pcm = [_audio stopRecordingFrames:&frames sampleRate:&sr];
+        float *pcm = [_audio stopRecordingFrames:&frames sampleRate:&sr];   // transfers buffer ownership
         [self stopTick];
         [self updatePlayButton];
         _recButton.title = @"● Rec";
-        if (pcm && frames) {
-            jv_track *vo = [self firstTrackOfKind:JV_TRACK_AUDIO];
-            jv_clip *c = jv_track_add_clip(vo, JV_CLIP_AUDIO, _recStartHead, (double)frames / sr);
-            c->u.audio.pcm = pcm;
-            c->u.audio.frames = frames;
-            c->u.audio.sample_rate = sr;
-            c->u.audio.channels = 2;
-            c->u.audio.gain = 1.0f;
-            c->u.audio.path = strdup("voiceover");
+        if (_liveRecClip) {
+            if (pcm && frames) {
+                // The live clip already points at this buffer; it now owns it.
+                _liveRecClip->u.audio.pcm = pcm;
+                _liveRecClip->u.audio.frames = frames;
+                _liveRecClip->u.audio.sample_rate = sr;
+                _liveRecClip->u.audio.channels = 2;
+                _liveRecClip->u.audio.path = strdup("voiceover");
+                _liveRecClip->duration = (double)frames / sr;
+            } else {
+                // Nothing captured: drop the placeholder clip.
+                _liveRecClip->u.audio.pcm = NULL;   // wasn't owned
+                [self removeClip:_liveRecClip];
+                free(pcm);
+            }
+            _liveRecClip = NULL;
         } else {
             free(pcm);
         }
         [self refreshAll];
+    }
+}
+
+// ---- Transport / navigation ----
+- (void)transportToggle { [self togglePlay]; }
+
+- (void)nudgePlayheadBy:(double)seconds {
+    if (_transportPlaying) [self stopTransport];
+    double t = _playhead + seconds;
+    if (t < 0) t = 0;
+    _playhead = t;
+    [self refreshAll];
+}
+
+- (void)zoomBy:(double)factor { [self setPixelsPerSecond:_pps * factor]; }
+
+- (void)addTextAtPlayhead {
+    [self addTextAtCanvasX:0.5f y:0.5f time:_playhead];
+    if (_selected && _selected->type == JV_CLIP_TEXT)
+        [_preview beginEditingTextClip:_selected];
+}
+
+// ---- Clipboard (deep single-clip copy) ----
+static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
+    *dst = *src;
+    size_t n;
+    switch (src->type) {
+        case JV_CLIP_IMAGE:
+            dst->u.image.path = src->u.image.path ? strdup(src->u.image.path) : NULL;
+            n = (size_t)src->u.image.width * src->u.image.height * 4;
+            dst->u.image.rgba = src->u.image.rgba ? (unsigned char *)memcpy(malloc(n), src->u.image.rgba, n) : NULL;
+            break;
+        case JV_CLIP_TEXT:
+            dst->u.text.string = src->u.text.string ? strdup(src->u.text.string) : NULL;
+            n = (size_t)src->u.text.width * src->u.text.height * 4;
+            dst->u.text.rgba = src->u.text.rgba ? (unsigned char *)memcpy(malloc(n), src->u.text.rgba, n) : NULL;
+            break;
+        case JV_CLIP_VIDEO:
+            dst->u.video.path = src->u.video.path ? strdup(src->u.video.path) : NULL;
+            dst->u.video.decoder = NULL;
+            break;
+        case JV_CLIP_AUDIO:
+            dst->u.audio.path = src->u.audio.path ? strdup(src->u.audio.path) : NULL;
+            n = src->u.audio.frames * 2 * sizeof(float);
+            dst->u.audio.pcm = src->u.audio.pcm ? (float *)memcpy(malloc(n), src->u.audio.pcm, n) : NULL;
+            break;
+    }
+}
+
+- (void)copySelectedClip {
+    if (!_selected) return;
+    if (_hasClipboard) jv_clip_free_payload(&_clipboard);
+    clone_clip_payload(&_clipboard, _selected);
+    _hasClipboard = YES;
+}
+
+- (BOOL)pasteClipAtPlayhead {
+    if (!_hasClipboard) return NO;
+    // Paste onto the first track whose kind matches the clipboard clip.
+    BOOL wantAudio = (_clipboard.type == JV_CLIP_AUDIO);
+    jv_track *dst = [self firstTrackOfKind:wantAudio ? JV_TRACK_AUDIO : JV_TRACK_VISUAL];
+    if (!dst) return NO;
+    [self recordUndo];
+    jv_clip *c = jv_track_add_clip(dst, _clipboard.type, _playhead, _clipboard.duration);
+    clone_clip_payload(c, &_clipboard);
+    c->start_time = _playhead;
+    [self selectTrack:dst clip:c];
+    [self refreshAll];
+    return YES;
+}
+
+// ---- Undo / redo ----
+- (void)recordUndo {
+    [_undo addObject:[NSValue valueWithPointer:jv_timeline_clone(_timeline)]];
+    if (_undo.count > 50) {
+        jv_timeline_destroy((jv_timeline *)[_undo[0] pointerValue]);
+        [_undo removeObjectAtIndex:0];
+    }
+    for (NSValue *v in _redo) jv_timeline_destroy((jv_timeline *)v.pointerValue);
+    [_redo removeAllObjects];
+}
+
+- (void)swapTimelineTo:(jv_timeline *)tl {
+    _selected = NULL;
+    _liveRecClip = NULL;
+    _timeline = tl;
+    _audio.timeline = tl;
+    if (_playhead > jv_timeline_duration(tl)) _playhead = 0;
+    [self refreshAll];
+}
+
+- (void)performUndo {
+    if (_undo.count == 0) return;
+    [_redo addObject:[NSValue valueWithPointer:_timeline]];   // current -> redo
+    jv_timeline *prev = (jv_timeline *)[_undo.lastObject pointerValue];
+    [_undo removeLastObject];
+    [self swapTimelineTo:prev];
+}
+
+- (void)performRedo {
+    if (_redo.count == 0) return;
+    [_undo addObject:[NSValue valueWithPointer:_timeline]];   // current -> undo
+    jv_timeline *next = (jv_timeline *)[_redo.lastObject pointerValue];
+    [_redo removeLastObject];
+    [self swapTimelineTo:next];
+}
+
+// Standard responder-chain actions (Edit menu key equivalents).
+- (void)copy:(id)sender { [self copySelectedClip]; }
+- (void)undo:(id)sender { [self performUndo]; }
+- (void)redo:(id)sender { [self performRedo]; }
+
+// Remove a clip from whatever track holds it.
+- (void)removeClip:(jv_clip *)clip {
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) {
+            if (&t->clips[j] == clip) {
+                jv_clip_free_payload(&t->clips[j]);
+                memmove(&t->clips[j], &t->clips[j + 1], (t->clip_count - j - 1) * sizeof(jv_clip));
+                t->clip_count--;
+                if (_selected == clip) _selected = NULL;
+                return;
+            }
+        }
     }
 }
 

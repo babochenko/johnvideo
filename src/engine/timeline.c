@@ -60,6 +60,47 @@ void jv_timeline_destroy(jv_timeline *tl) {
     free(tl);
 }
 
+static void *dup_mem(const void *src, size_t n) {
+    if (!src || !n) return NULL;
+    void *p = malloc(n);
+    if (p) memcpy(p, src, n);
+    return p;
+}
+
+jv_timeline *jv_timeline_clone(const jv_timeline *src) {
+    if (!src) return NULL;
+    jv_timeline *tl = jv_timeline_create(src->width, src->height, src->fps);
+    tl->playhead = src->playhead;
+    for (size_t i = 0; i < src->track_count; i++) {
+        const jv_track *st = &src->tracks[i];
+        jv_track *t = jv_timeline_add_track(tl, st->kind, st->name);
+        for (size_t j = 0; j < st->clip_count; j++) {
+            const jv_clip *sc = &st->clips[j];
+            jv_clip *c = jv_track_add_clip(t, sc->type, sc->start_time, sc->duration);
+            *c = *sc;                 // copy scalars + pointers, then deep-copy owned buffers
+            switch (sc->type) {
+                case JV_CLIP_IMAGE:
+                    c->u.image.path = sc->u.image.path ? jv_strdup(sc->u.image.path) : NULL;
+                    c->u.image.rgba = dup_mem(sc->u.image.rgba, (size_t)sc->u.image.width * sc->u.image.height * 4);
+                    break;
+                case JV_CLIP_TEXT:
+                    c->u.text.string = sc->u.text.string ? jv_strdup(sc->u.text.string) : NULL;
+                    c->u.text.rgba = dup_mem(sc->u.text.rgba, (size_t)sc->u.text.width * sc->u.text.height * 4);
+                    break;
+                case JV_CLIP_VIDEO:
+                    c->u.video.path = sc->u.video.path ? jv_strdup(sc->u.video.path) : NULL;
+                    c->u.video.decoder = NULL;   // reopened lazily by the compositor
+                    break;
+                case JV_CLIP_AUDIO:
+                    c->u.audio.path = sc->u.audio.path ? jv_strdup(sc->u.audio.path) : NULL;
+                    c->u.audio.pcm = (float *)dup_mem(sc->u.audio.pcm, sc->u.audio.frames * 2 * sizeof(float));
+                    break;
+            }
+        }
+    }
+    return tl;
+}
+
 jv_track *jv_timeline_add_track(jv_timeline *tl, jv_track_kind kind, const char *name) {
     if (!tl) return NULL;
     if (tl->track_count == tl->track_cap) {

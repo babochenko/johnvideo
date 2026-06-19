@@ -83,7 +83,19 @@
     { "id": 43, "area": "compositing", "request": "Top visual track has higher z-order (drawn on top)", "status": "done" },
     { "id": 44, "area": "repo", "request": "Add .gitignore for build artifacts and non-essential files", "status": "done" },
     { "id": 45, "area": "docs", "request": "Flush requirements into README.md", "status": "done" },
-    { "id": 46, "area": "docs", "request": "Flush all context and user requests into readme.json", "status": "done" }
+    { "id": 46, "area": "docs", "request": "Flush all context and user requests into readme.json", "status": "done" },
+    { "id": 47, "area": "audio", "request": "Playback still produces no sound", "status": "done", "note": "Source format now matches output (non-interleaved) and deinterleaves per-channel; verify on device." },
+    { "id": 48, "area": "recording", "request": "Show the recorded take + waveform on the timeline in real time while recording", "status": "done", "note": "Fixed-capacity capture buffer; a live clip references it and grows each tick." },
+    { "id": 49, "area": "ui", "request": "Bottom toolbar should float over the timeline (no reserved space), not movable", "status": "done" },
+    { "id": 50, "area": "keys", "request": "Space toggles play/stop", "status": "done" },
+    { "id": 51, "area": "keys", "request": "Left/Right arrows and h/l move the playhead in 0.5s steps", "status": "done" },
+    { "id": 52, "area": "keys", "request": "Cmd/Ctrl+C copy clip", "status": "done" },
+    { "id": 53, "area": "keys", "request": "Cmd/Ctrl+V paste (clip clipboard, else image)", "status": "done" },
+    { "id": 54, "area": "keys", "request": "Cmd/Ctrl+Z undo", "status": "done" },
+    { "id": 55, "area": "keys", "request": "Cmd/Ctrl+Shift+Z redo", "status": "done" },
+    { "id": 56, "area": "keys", "request": "Ctrl + '+'/'-' zoom the timeline", "status": "done" },
+    { "id": 57, "area": "keys", "request": "'t' adds text at the current position", "status": "done" },
+    { "id": 58, "area": "project", "request": "Hierarchical project file: 2-space indented sublines, blank line after each track (neither required for parsing)", "status": "done" }
   ],
   "needs_on_device_verification": [
     "Recorded voiceover audible during in-app Play (export path proven; live engine output hardened but unverified headlessly)",

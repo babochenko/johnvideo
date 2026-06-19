@@ -7,4 +7,5 @@
 
 @interface PreviewView : NSView
 @property(nonatomic, weak) id<EditorHost> host;
+- (void)beginEditingTextClip:(jv_clip *)c;
 @end

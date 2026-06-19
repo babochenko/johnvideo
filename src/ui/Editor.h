@@ -34,4 +34,17 @@ static const CGFloat kRulerHeight = 18.0;
 // Selection (a clip is identified by its track + clip pointer).
 - (void)selectTrack:(jv_track *)t clip:(jv_clip *)c;
 - (jv_clip *)selectedClip;
+
+// Transport / navigation (keyboard).
+- (void)transportToggle;                 // space
+- (void)nudgePlayheadBy:(double)seconds;  // arrows / h / l
+- (void)zoomBy:(double)factor;            // ctrl +/-
+- (void)addTextAtPlayhead;                // t
+
+// Editing / history.
+- (void)recordUndo;                       // snapshot before a mutation
+- (void)copySelectedClip;
+- (BOOL)pasteClipAtPlayhead;              // YES if a clip was pasted
+- (void)performUndo;
+- (void)performRedo;
 @end

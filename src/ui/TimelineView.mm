@@ -213,12 +213,13 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     // Header column: start a track reorder drag.
     if (p.x < kHeaderWidth) {
         size_t ti = [self trackIndexForY:p.y];
-        if (ti != SIZE_MAX) { _drag = DRAG_TRACK; _trackDragIdx = ti; return; }
+        if (ti != SIZE_MAX) { [self.host recordUndo]; _drag = DRAG_TRACK; _trackDragIdx = ti; return; }
     }
 
     jv_track *t = NULL; size_t idx = 0;
     jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
     if (c) {
+        [self.host recordUndo];
         [self.host selectTrack:t clip:c];
         NSRect r = [self rectForClip:c onTrack:idx];
         if (p.x > NSMaxX(r) - 8) {            // right edge => trim end
@@ -402,17 +403,23 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 }
 
 - (void)keyDown:(NSEvent *)e {
-    unichar k = [e.charactersIgnoringModifiers length] ? [e.charactersIgnoringModifiers characterAtIndex:0] : 0;
-    if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) {
-        [self deleteSelected];
-    } else {
-        [super keyDown:e];
-    }
+    NSString *chars = e.charactersIgnoringModifiers;
+    unichar k = chars.length ? [chars characterAtIndex:0] : 0;
+    NSEventModifierFlags m = e.modifierFlags;
+    if ((m & NSEventModifierFlagControl) && (k == '=' || k == '+')) { [self.host zoomBy:1.25]; [self setNeedsDisplay:YES]; return; }
+    if ((m & NSEventModifierFlagControl) && (k == '-' || k == '_')) { [self.host zoomBy:0.8];  [self setNeedsDisplay:YES]; return; }
+    if (k == ' ') { [self.host transportToggle]; return; }
+    if (k == NSLeftArrowFunctionKey  || k == 'h') { [self.host nudgePlayheadBy:-0.5]; return; }
+    if (k == NSRightArrowFunctionKey || k == 'l') { [self.host nudgePlayheadBy:0.5];  return; }
+    if (k == 't') { [self.host addTextAtPlayhead]; return; }
+    if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) { [self deleteSelected]; return; }
+    [super keyDown:e];
 }
 
 - (void)deleteSelected {
     jv_clip *sel = [self.host selectedClip];
     if (!sel) return;
+    [self.host recordUndo];
     jv_timeline *tl = [self.host timeline];
     for (size_t i = 0; i < tl->track_count; i++) {
         jv_track *t = &tl->tracks[i];
@@ -431,8 +438,10 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 
 // ---- Paste (Cmd+V via the Edit menu) ----
 - (void)paste:(id)sender {
+    if ([self.host pasteClipAtPlayhead]) return;   // internal clip clipboard first
     [self ingestPasteboard:[NSPasteboard generalPasteboard] atTime:[self.host playhead]];
 }
+- (void)copy:(id)sender { [self.host copySelectedClip]; }
 
 // Shared by paste: and performDragOperation:. Image bytes, then file URL, then
 // an http(s) URL to fetch.

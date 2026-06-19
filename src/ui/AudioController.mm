@@ -11,6 +11,7 @@ static const double kSR = 48000.0;
     double             _playSR;        // playback engine sample rate (hardware)
     double             _startTime;     // timeline seconds at play start
     BOOL               _playing;
+    float             *_mixbuf;        // preallocated interleaved scratch for the render block
 
     AVAudioEngine     *_recEngine;
     float             *_recBuf;        // interleaved stereo float
@@ -36,40 +37,50 @@ static const double kSR = 48000.0;
     _playSample = 0;
 
     _playEngine = [[AVAudioEngine alloc] init];
+    AVAudioMixerNode *mixer = _playEngine.mainMixerNode;   // lazily creates+connects outputNode
+    AVAudioOutputNode *output = _playEngine.outputNode;
 
-    // Match the output hardware's sample rate; connecting with a mismatched
-    // rate is what throws the NSException that aborts the process. The mixer
-    // resamples by time, so any rate is fine to feed it.
-    double sr = [_playEngine.outputNode outputFormatForBus:0].sampleRate;
-    if (sr <= 0) sr = kSR;
+    // Build the source format from the OUTPUT format (same sample rate and
+    // interleaved-ness) — feeding the graph a mismatched layout is what made it
+    // silent. Hardware float is typically non-interleaved (planar).
+    AVAudioFormat *outFmt = [output inputFormatForBus:0];
+    double sr = outFmt.sampleRate > 0 ? outFmt.sampleRate : kSR;
     _playSR = sr;
-
+    BOOL interleaved = outFmt.isInterleaved;
     AVAudioFormat *fmt = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                                           sampleRate:sr
                                                             channels:2
-                                                         interleaved:YES];
+                                                         interleaved:interleaved];
+    if (!_mixbuf) _mixbuf = (float *)malloc(sizeof(float) * 16384 * 2);
+
     __weak AudioController *weakSelf = self;
     _source = [[AVAudioSourceNode alloc] initWithFormat:fmt renderBlock:
         ^OSStatus(BOOL *silence, const AudioTimeStamp *ts,
                   AVAudioFrameCount count, AudioBufferList *abl) {
             AudioController *s = weakSelf;
-            float *out = (float *)abl->mBuffers[0].mData;
-            if (!s || !s->_timeline) { memset(out, 0, count * 2 * sizeof(float)); *silence = YES; return noErr; }
+            if (!s || !s->_timeline || count > 16384) {
+                for (UInt32 b = 0; b < abl->mNumberBuffers; b++)
+                    memset(abl->mBuffers[b].mData, 0, abl->mBuffers[b].mDataByteSize);
+                *silence = YES; return noErr;
+            }
             double now = s->_startTime + (double)s->_playSample / s->_playSR;
-            jv_mix_audio(s->_timeline, now, (int)s->_playSR, (int)count, out);
+            jv_mix_audio(s->_timeline, now, (int)s->_playSR, (int)count, s->_mixbuf);
+            if (abl->mNumberBuffers >= 2) {                 // non-interleaved: split L/R
+                float *L = (float *)abl->mBuffers[0].mData;
+                float *R = (float *)abl->mBuffers[1].mData;
+                for (AVAudioFrameCount i = 0; i < count; i++) { L[i] = s->_mixbuf[i*2]; R[i] = s->_mixbuf[i*2+1]; }
+            } else {                                        // interleaved
+                memcpy(abl->mBuffers[0].mData, s->_mixbuf, count * 2 * sizeof(float));
+            }
             s->_playSample += count;
-            *silence = NO;   // without this CoreAudio may discard the buffer as silence
+            *silence = NO;
             return noErr;
         }];
 
     @try {
-        AVAudioMixerNode *mixer = _playEngine.mainMixerNode;   // also lazily creates outputNode
-        AVAudioOutputNode *output = _playEngine.outputNode;
         [_playEngine attachNode:_source];
         [_playEngine connect:_source to:mixer format:fmt];
-        // Explicitly wire mixer -> output at the hardware format so there is a
-        // guaranteed path to the speakers.
-        [_playEngine connect:mixer to:output format:[output inputFormatForBus:0]];
+        [_playEngine connect:mixer to:output format:outFmt];
         mixer.outputVolume = 1.0;
         [_playEngine prepare];
         NSError *err = nil;
@@ -95,13 +106,15 @@ static const double kSR = 48000.0;
 }
 
 // ---- Recording ----
+// Live access for the timeline to draw the take as it is captured.
+- (const float *)recordingPCM { return _recBuf; }
+- (size_t)recordingFrames { return _recFrames; }
+- (int)recordingSampleRate { return _recSR > 0 ? _recSR : (int)kSR; }
+
 - (void)appendStereoFrom:(AVAudioPCMBuffer *)buf {
     AVAudioFrameCount n = buf.frameLength;
-    if (n == 0) return;
-    if (_recFrames + n > _recCap) {
-        _recCap = (_recFrames + n) * 2 + 4096;
-        _recBuf = (float *)realloc(_recBuf, _recCap * 2 * sizeof(float));
-    }
+    if (n == 0 || !_recBuf) return;
+    if (_recFrames + n > _recCap) n = (AVAudioFrameCount)(_recCap - _recFrames);   // capped, no realloc
     float *const *ch = buf.floatChannelData;
     int channels = (int)buf.format.channelCount;
     for (AVAudioFrameCount i = 0; i < n; i++) {
@@ -127,6 +140,12 @@ static const double kSR = 48000.0;
         _recEngine = nil; return;
     }
     _recSR = (int)inFmt.sampleRate;
+
+    // Fixed-capacity buffer (10 min) so the pointer is stable while a live clip
+    // references it during recording (no realloc to invalidate it).
+    _recCap = (size_t)_recSR * 60 * 10;
+    _recBuf = (float *)malloc(_recCap * 2 * sizeof(float));
+    if (!_recBuf) { _recEngine = nil; return; }
 
     __weak AudioController *weakSelf = self;
     @try {

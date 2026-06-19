@@ -1,208 +1,231 @@
 # johnvideo
 
-A simple native macOS video editor written in C, using FFmpeg for decode/encode/mux.
+A simple **native macOS video editor** written in **C** (engine) + **Objective-C++** (UI), using **FFmpeg** for decode/encode/mux. Timeline-based: images, text, video, multi-track audio with voiceover recording, and source-quality MP4 export. Liquid Glass UI, built with a plain Makefile against Homebrew FFmpeg.
 
-## Goal
+---
 
-A lightweight timeline-based editor that can:
+## Build & run
 
-- **Images** — copy-paste into the timeline, or drag-and-drop from anywhere, including directly from a web browser.
-- **Text** — add directly into the timeline or preview at any point by right-clicking.
-- **Video** — import video clips, trim, and arrange on the timeline.
-- **Audio** — record voiceovers against playback and import background music, across multiple audio tracks.
-- **Export** — render the whole timeline to a single MP4 with audio.
+```sh
+make            # build  -> build/johnvideo.app
+make run        # build and launch the .app bundle (needed for the mic permission prompt)
+make run-direct # run the raw binary (stderr logs; mic NOT granted this way)
+make clean      # remove build/
+```
 
-## User requirements (tracked)
+Requirements: macOS 26 (Tahoe) + Xcode 26 command-line tools (SDK 26), Homebrew `ffmpeg` (`brew install ffmpeg`). Apple Silicon.
 
-Everything the user has explicitly asked for, with status. ✅ done · 🔲 outstanding.
-
-**Core editor**
-- ✅ Native macOS app in C + FFmpeg, built with a Makefile against Homebrew FFmpeg
-- ✅ Copy-paste images into the timeline (Cmd+V)
-- ✅ Drag-and-drop images from anywhere, including a browser (file / raw bytes / URL fetch)
-- ✅ Add text by right-clicking the preview or the timeline
-- ✅ Import & composite video clips
-- ✅ Record voiceovers; import music; multiple audio tracks
-- ✅ Export the timeline to an MP4 with audio
-
-**Playback & timeline**
-- ✅ Play/pause transport with a moving playhead (wall-clock driven)
-- ✅ Current time readout (m:ss.mmm)
-- ✅ Playhead snaps to clip boundaries when scrubbing
-- ✅ Recorded take is placed at the time recording started (not where it stopped)
-- ✅ Make the timeline horizontally zoomable (pinch, or Option/Cmd-scroll)
-- ✅ Snap clips to the playhead and to other clips' boundaries when moving/trimming (sticky)
-- ✅ Add and remove video/audio tracks (right-click a track header)
-- ✅ Move clips between tracks (drag vertically onto a same-kind track)
-
-**Canvas (preview) editing**
-- ✅ Pasted/dropped images appear upright
-- ✅ Resize and rotate images (and other visual clips) on the canvas (selection handles)
-- ✅ Move clips around the canvas
-
-**Audio**
-- ✅ Recorded voiceover audible during in-app playback (explicit mixer→output path) — verify on device
-- ✅ Show a waveform of recorded audio on its timeline clip
-
-**Look & feel (Liquid Glass)**
-- ✅ Adopt Liquid Glass without migrating to Swift/Xcode (AppKit `NSGlassEffectView`, macOS 26 SDK)
-- ✅ Floating bottom toolbar with individual Liquid Glass buttons (merged in a glass container)
-- ✅ Brighter track labels (Video 1/2, Voiceover, Music) and time counter
-
-**Export quality**
-- ✅ Bilinear compositing + canvas adopts the first imported video's native resolution
-- ✅ Export at source quality (lossless H.264, CRF 0)
-
-**Text**
-- ✅ Insert text immediately (no popup); edit in place on the preview with a cursor
-- ✅ Double-click a text clip (or empty canvas) to edit; edits reflect live in the timeline clip
-
-**Trimming & snapping**
-- ✅ Drag either clip edge to trim (left edge trims into the source); both sticky
-- ✅ Regular clip moves snap to playhead and neighbouring clip edges
-- ✅ Canvas moves snap to canvas edges/center; rotation snaps to 90°
-
-**Tracks**
-- ✅ Reorder tracks by dragging the track header vertically
-- ✅ Video tracks always kept above audio tracks
-- ✅ Top visual track has the highest z-order (drawn on top)
-- ✅ Horizontal scroll pans the timeline; vertical scroll moves through the track list
-- ✅ Delete-track confirmation warning that media disappears
-
-**Project files**
-- ✅ Save/Open a project as a git-trackable text `.jvp` (File menu, Cmd+S / Cmd+O)
-- ✅ Path-less media (pasted images, recordings) saved to a `<file>.assets/` sidecar
-- ✅ `.gitignore` for build output and generated artifacts
-
-**UI polish**
-- ✅ Floating toolbar of separate rounded Liquid Glass capsule buttons (not merged)
-- ✅ Opaque dark window background (no stray light edges)
+---
 
 ## Architecture
 
-The most important constraint: **"native macOS" UI means AppKit, which is Objective-C — pure C cannot drive it.** So the app is split:
+**The core constraint:** "native macOS" UI means AppKit, which is Objective-C — pure C cannot drive it. So the app is split:
 
-- **Pure-C engine** — timeline/data model, audio mixer, video decode module, export pipeline.
-- **Objective-C++ (`.mm`) UI shell** — windows, views, events. `.mm` lets a single file mix Cocoa, the C engine, and FFmpeg's C APIs freely.
+- **Pure-C engine** (`src/engine/`) — data model, visual compositor, audio mixer, video decode, MP4 export. UI-agnostic.
+- **Objective-C++ UI shell** (`src/ui/`, `.mm`) — windows, views, events. `.mm` lets one file freely mix Cocoa, the C engine, and FFmpeg's C APIs.
 
-The C engine is UI-agnostic; AppKit is used only for windows, views, and event handling.
+**Two pipelines are shared, one implementation each, two consumers:**
+- `jv_render_frame()` — composites visual tracks at time *t*. Used by the **preview** and the **exporter**.
+- `jv_mix_audio()` — sums audio tracks at time *t*. Used by **live playback** and the **exporter**.
 
-**Key design decision:** FFmpeg is only required at *export* time for output, and for *video import* in the edit layer. Live editing/preview of images and text uses native macOS 2D APIs — no encode/decode on every interaction.
+This guarantees the preview matches the export.
 
-## Stack
+### Stack
 
 | Concern | Choice |
 |---|---|
 | UI shell | AppKit (Objective-C++) |
-| Preview canvas | Core Graphics / CALayer |
-| Text rendering | Core Text (NSAttributedString) |
-| Clipboard + drag-drop | NSPasteboard / NSDraggingDestination |
-| Still images | ImageIO / NSImage |
+| Preview canvas | Core Graphics / NSImage (non-flipped view, top-down RGBA) |
+| Text rendering | Core Text (rasterized to RGBA) + in-place `NSTextField` editor |
+| Clipboard / drag-drop | NSPasteboard / NSDraggingDestination |
+| Still images | ImageIO |
 | Remote URL drops | NSURLSession |
-| Video import/decode | libavformat + libavcodec + libswscale → CGImage |
-| Mic capture | AVFoundation (AVCaptureSession); miniaudio as fallback |
+| Video / audio import & decode | libavformat + libavcodec + libswscale + libswresample |
+| Mic capture | AVFoundation (AVAudioEngine input tap) |
+| Playback | AVAudioEngine + AVAudioSourceNode pulling `jv_mix_audio` |
 | Encode + mux | libavcodec (H.264 + AAC) + libavformat |
+| Liquid Glass | AppKit `NSGlassEffectView` (macOS 26 SDK) — **no Swift/Xcode migration** |
 
-## Build
+### Key decisions
 
-- **Build system:** plain **Makefile** producing a macOS `.app` bundle.
-- **FFmpeg source:** **Homebrew** (`brew install ffmpeg`); link against Homebrew's libav* libraries.
+- **Native AppKit, not GTK/Swift.** User wanted native macOS; the engine stays pure C and the UI is `.mm`.
+- **Orientation settled empirically** (with probe programs in `test/`): RGBA buffers are **top-down**, the preview view is **non-flipped**, and `NSImage drawInRect:` draws them upright. Text and images share one convention.
+- **Resolution independence:** the compositor sizes clips as a fraction of canvas **height** (aspect preserved) and positions them with normalized `(cx, cy)`. The canvas adopts the **first imported video's native resolution**, so a 1080p source exports at 1080p.
+- **Liquid Glass is a system material** available to AppKit via `NSGlassEffectView` on the macOS 26 SDK — adopted without migrating off C/Obj-C++.
+- **Export is lossless** (H.264 CRF 0) for source quality.
+- **Undo/redo via deep-clone snapshots** of the whole timeline (`jv_timeline_clone`), recorded before each mutation.
+- **Project file is plain text** (`.jvp`), git-trackable; path-less media (pasted images, recordings) saved to a sibling `<file>.assets/` folder.
 
-## Data model
-
-```
-Timeline { fps, w, h, Track[] }
-Track    { kind: VISUAL|AUDIO, name, Clip[] }
-Clip     { type, start_time, duration, in_offset }   // in_offset = trim into source
-  IMAGE  { cgimage, x, y, scale }
-  TEXT   { attributed_string, x, y }
-  VIDEO  { source_path, decoder_handle, x, y, scale }   // has its own audio too
-  AUDIO  { wav_path, sample_rate, channels, gain }
-```
-
-- Multiple tracks of each kind.
-- `in_offset` + `duration` give trimming.
-- Z-order for visuals = track order.
-- All audio tracks sum in the mixer with per-clip `gain`.
-
-## Feature notes
-
-### Images (paste & drag-drop)
-Handle each incoming pasteboard flavor:
-- File path / file URL (local file, or browser "drag image") → load via ImageIO.
-- Remote `http(s)://` URL → fetch via NSURLSession.
-- Raw image data (`public.png` etc., e.g. clipboard paste) → decode from memory.
-
-Result becomes an IMAGE clip dropped at the cursor position. Ctrl/Cmd+V uses the same handler.
-
-### Text (right-click)
-Right-click on the timeline or preview → context menu "Add text." Click position maps to (track + time) on the timeline, or (x,y) on the preview frame. Creates a TEXT clip with an inline editor; rendered live with Core Text.
-
-### Video import (the hardest part — edit layer, not just export)
-A C decoder module wraps one source file and answers "give me the frame at time T":
-- Open file, find video stream, seek to nearest keyframe before T, decode forward to T.
-- swscale → RGBA → CGImage for preview.
-- Cache last decoded frame; decode on a background thread so scrubbing stays responsive.
-- The clip's embedded audio is extracted to PCM and treated as an AUDIO source during mixing.
-
-### Audio (voiceover + music, multi-track)
-- **Mixer:** at time T, sum PCM from every overlapping AUDIO clip (voiceover, music, video-clip audio) applying per-clip gain. Used for both live playback and export.
-- **Voiceover:** record-against-playback — playhead plays, mic captures via AVFoundation → temp WAV → AUDIO clip on a voiceover track.
-- **Music:** import an audio file (drag-drop / file picker) as an AUDIO clip on a music track; trim/move like any clip.
-
-### Export
-Per output frame: composite all visual tracks (z-ordered) → swscale → H.264 encoder.
-In parallel: mix all audio tracks → AAC encoder.
-Interleave both streams into one MP4 by PTS. Most FFmpeg fiddliness (timestamps, interleaving) lives here.
-
-## Build phases — all complete
-
-1. ✅ **Skeleton** — `.app` bundle, Makefile linking AppKit + ffmpeg (Homebrew), preview + timeline panes, C-engine / Obj-C++ split.
-2. ✅ **Engine + preview** — data model, compositor renders visuals at the playhead into a CGImage.
-3. ✅ **Images + text** — paste (Cmd+V), drag-drop (local file → browser image → URL fetch via NSURLSession), right-click "Add Text".
-4. ✅ **Video import** — FFmpeg decoder module (seek + decode-forward), video clips composited in preview.
-5. ✅ **Multi-track timeline** — track lanes, time ruler, scrub, clip select / move / trim, delete.
-6. ✅ **Audio playback + mixer** — AVAudioSourceNode pulls the C mixer; all audio tracks summed, synced to visual refresh.
-7. ✅ **Voiceover + music** — AVFoundation mic capture (record-against-playback) → audio clip; music/video audio imported via the decoder.
-8. ✅ **Export** — composite all visual tracks + mix all audio tracks, encode H.264 + AAC, mux to MP4.
+---
 
 ## Project layout
 
 ```
 johnvideo/
-├── Makefile                 # make / make run / make clean  →  build/johnvideo.app
-├── Info.plist               # bundle metadata + mic-usage string
+├── Makefile                 # make / run / run-direct / clean -> build/johnvideo.app
+├── Info.plist               # bundle metadata + NSMicrophoneUsageDescription
+├── .gitignore               # build output, macOS cruft, *.assets/, exported media
+├── README.md                # this file (full knowledge dump)
+├── readme.json              # machine-readable context + 58 tracked requirements
 ├── src/
 │   ├── engine/              # pure C, UI-agnostic
-│   │   ├── timeline.[ch]     # data model + compositor (jv_render_frame) + mixer (jv_mix_audio)
-│   │   ├── decoder.[ch]      # FFmpeg: frame-at-time + read-all-audio
-│   │   └── export.[ch]       # FFmpeg: composite+mix → H.264/AAC → MP4
-│   └── ui/                  # Objective-C++ AppKit shell
-│       ├── main.mm           # NSApplication entry
-│       ├── AppDelegate.mm    # coordinator + EditorHost + toolbar + actions
+│   │   ├── timeline.h/.c     # data model, compositor (jv_render_frame), mixer (jv_mix_audio),
+│   │   │                     #   track ops (add/remove/move/order), deep clone
+│   │   ├── decoder.h/.c      # FFmpeg: frame-at-time (seek+decode-forward) + read-all-audio
+│   │   └── export.h/.c       # FFmpeg: composite+mix -> H.264/AAC -> MP4
+│   └── ui/                   # Objective-C++ AppKit shell
+│       ├── main.mm           # NSApplication entry + menus (App / File / Edit)
+│       ├── AppDelegate.mm    # coordinator, EditorHost, RootView layout, toolbar,
+│       │                     #   transport, recording, export, save/open, undo/redo, clipboard
 │       ├── Editor.h          # EditorHost protocol + layout constants
-│       ├── PreviewView.mm    # composited preview, right-click text, paste/drop
-│       ├── TimelineView.mm   # ruler, lanes, clips, scrub/move/trim, drops
+│       ├── PreviewView.mm    # composited preview; canvas move/resize/rotate; in-place text edit;
+│       │                     #   paste/drop; selection handles
+│       ├── TimelineView.mm   # ruler, lanes, clips, waveforms; scrub/move/trim (both edges);
+│       │                     #   track reorder; scroll/zoom; snapping; right-click menus
 │       ├── Media.mm          # ImageIO load + Core Text rasterize + CGImage wrap
-│       └── AudioController.mm # AVAudioEngine playback + mic recording
-└── test/test_export.c       # headless engine smoke test (no GUI)
+│       ├── AudioController.mm # AVAudioEngine playback + mic recording (live buffer)
+│       └── Project.mm        # .jvp text save/load with sidecar PNG/WAV
+└── test/                     # headless tests
+    ├── test_export.c         # engine -> MP4 smoke test
+    ├── test_orient.mm        # buffer orientation probe
+    ├── test_display.mm       # NSImage display orientation probe
+    └── test_project.mm       # .jvp save/load round-trip
 ```
 
-## Usage
+---
+
+## Data model (engine)
+
+```c
+Timeline { fps, width, height, Track[], playhead }
+Track    { kind: VISUAL|AUDIO, name, Clip[] }
+Clip     { type, start_time, duration, in_offset, union payload }
+  IMAGE  { path, rgba, w, h, cx, cy, scale, rotation }
+  TEXT   { string, font_size, color, rgba, w, h, cx, cy, scale, rotation }
+  VIDEO  { path, decoder (lazy), cx, cy, scale, rotation }   // its audio is imported to an audio track
+  AUDIO  { path, pcm (interleaved stereo float), frames, sample_rate, channels, gain }
+```
+
+- **Times** in seconds. `in_offset` is the trim into the source (left-edge trim).
+- **Z-order:** the **first** visual track in the list is drawn **last** (on top). The compositor iterates tracks back-to-front.
+- **Scale** = fraction of canvas height; **(cx, cy)** = normalized center (cy is top-down: 0 = top).
+- **Rotation** in radians, clockwise.
+- Tracks are kept ordered: **all visual tracks precede all audio tracks** (`jv_timeline_order_tracks`).
+
+### Compositor & mixer
+
+- `jv_render_frame` clears to opaque black, then for each active visual clip alpha-composites (premultiplied source-over) with **bilinear** sampling and **rotation** (inverse-mapped over the rotated bounding box).
+- `jv_mix_audio` sums every overlapping audio clip, mapping timeline time → source sample by each clip's own `sample_rate` (so any rate mixes correctly), applying `gain`, soft-clipped to [-1, 1].
+
+---
+
+## Features
+
+- **Images** — paste (Cmd+V), drag-drop from Finder or a **browser** (file URL / raw bytes / http URL fetched via NSURLSession), or Import. Decoded to top-down RGBA via ImageIO.
+- **Text** — inserted **immediately** (no popup) and edited **in place on the preview with a cursor** (overlaid `NSTextField`); edits reflect live in the timeline clip label. Right-click "Add Text", press **t**, or **double-click** the canvas / a text clip.
+- **Video** — imported and composited; a C decoder seeks and decodes forward to the playhead time, swscale → RGBA → CGImage. The video's embedded audio is imported onto an audio track.
+- **Audio** — multiple tracks; **voiceover recording** against the playhead; **music import**. Waveforms drawn on clips.
+- **Export** — composites all visual tracks + mixes all audio, encodes **H.264 (CRF 0, lossless) + AAC**, muxes to MP4. Runs on a background queue with a progress sheet.
+
+### Recording (voiceover)
+- Hit **● Rec** → mic permission prompt (first time) → capture starts; the playhead advances from the capture clock.
+- A **live clip grows on the Voiceover track in real time**, including its **waveform** (capture uses a fixed-capacity buffer so the pointer is stable; 10-minute cap).
+- **■ Stop** finalizes the take in place (at the time recording started).
+
+---
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| Space | Play / stop |
+| ← / → , h / l | Move playhead ∓ 0.5 s |
+| t | Add text at the playhead (enters in-place edit) |
+| Ctrl + `+` / `-` | Zoom timeline in / out |
+| Delete / Backspace | Delete selected clip |
+| Cmd/Ctrl + C | Copy selected clip |
+| Cmd/Ctrl + V | Paste clip (falls back to pasting an image from the system clipboard) |
+| Cmd/Ctrl + Z | Undo |
+| Cmd/Ctrl + Shift + Z | Redo |
+| Cmd + S / Cmd + O | Save / Open project |
+
+---
+
+## Timeline interactions
+
+- **Scrub** by clicking/dragging the ruler or empty lanes; the playhead **snaps** to clip boundaries (and 0).
+- **Move** a clip by dragging; **trim** by dragging either edge (left edge trims into the source). All are **sticky** — they snap to the playhead and to neighbouring clips' edges.
+- **Move between tracks** by dragging a clip vertically onto another same-kind track.
+- **Reorder tracks** by dragging a track header up/down (video stays above audio).
+- **Zoom**: pinch, or Option/Cmd-scroll, or Ctrl +/-. **Scroll**: horizontal pans time, vertical moves the track list.
+- **Right-click**: on a clip → Delete; on empty lane → Add Text Here; on a track header → Add Video/Audio Track, Delete This Track (**with confirmation** warning that media disappears).
+- **Floating toolbar**: separate rounded Liquid Glass capsule buttons overlay the bottom of the timeline (no reserved space, not movable).
+
+## Canvas (preview) interactions
+
+- **Move** a clip by dragging; sticky to canvas **edges** and **center**.
+- **Resize** via the bottom-right handle; **rotate** via the top handle (snaps to multiples of 90°). Selection chrome rotates with the clip.
+- **Right-click / double-click** to add or edit text in place.
+
+---
+
+## Project file format (`.jvp`)
+
+Plain text, line-based, git-diff friendly. Hierarchical: clips indented 2 spaces, their sublines 4, a blank line after each track (indentation and blanks are **ignored** by the parser). Media with a source file is referenced by path; path-less media (pasted images, recordings) is written into a sibling `<file>.assets/` folder (PNG / 16-bit WAV) and referenced relatively.
 
 ```
-make run        # build and launch
+johnvideo 1
+canvas 1280 720 25.0000
+track V Video 1
+  clip text 1.0000 3.0000 0.0000 0.5000 0.4000 0.0000 0.3000 64.0000 0xFFFFFFFF
+    str Hello World
+  clip image 0.0000 2.0000 0.0000 0.3000 0.3000 0.6000 0.0000
+    asset project.jvp.assets/img0.png
+
+track A Music
+  clip audio 0.0000 5.0000 0.0000 1.0000 48000
+    src /Users/me/music.mp3
 ```
 
-- **Add images**: drag from Finder or a browser onto the preview/timeline, paste with Cmd+V, or "Add Image…".
-- **Add text**: right-click the preview (placed where you click) or a timeline lane → "Add Text Here".
-- **Import video / music**: "Import…" (or drag a file in). Video goes to a visual track; its audio + standalone music go to audio tracks.
-- **Voiceover**: position the playhead, click **● Rec** — the timeline plays while the mic records; click **■ Stop** to drop the take on the Voiceover track.
-- **Edit**: drag a clip to move it, drag its right edge to trim, press Delete to remove. Scrub by clicking the ruler.
-- **Export**: **Export…** → choose a path → renders the timeline to MP4.
+Clip line fields: `start dur in_offset` then per type — image/video: `cx cy scale rotation`; text: `cx cy scale rotation fontpx 0xRRGGBBAA`; audio: `gain sample_rate`.
 
-## Architecture-as-built notes
+---
 
-- **Resolution independence**: the compositor sizes clips as a fraction of canvas height (aspect preserved) and positions them with normalized (cx, cy), so the small live preview and the full-res export match.
-- **Shared pipelines**: preview and export both call `jv_render_frame`; playback and export both call `jv_mix_audio`. One implementation, two consumers.
-- **Threading**: the audio render block reads the timeline on the audio thread and export runs on a background queue. Mutating clips during playback is not yet locked — fine for interactive single-user editing, a known sharp edge.
+## Requirements (all delivered)
+
+All 58 tracked user requests are implemented; the machine-readable list with per-item notes lives in **`readme.json`**. Grouped summary:
+
+- **Core:** native C+FFmpeg app, Makefile, Homebrew; paste/drag-drop images (incl. browser); right-click text; video import; multi-track audio; voiceover; music; MP4 export.
+- **Playback/timeline:** wall-clock transport, time readout, playhead boundary snap, take placed at record start, horizontal zoom, sticky clip move/trim (both edges), add/remove tracks, move clips between tracks, track reorder, video-above-audio, top-track z-order, horizontal/vertical scroll, delete-track confirmation.
+- **Canvas:** upright images & text, move, resize, rotate (90° snap), canvas-edge snap.
+- **Audio:** live playback (incl. recorded voiceover), live recording waveform.
+- **Look:** Liquid Glass (no Swift), floating rounded glass buttons, bright labels/time, dark window (no white line).
+- **Export:** bilinear compositing, source-resolution canvas, lossless CRF 0.
+- **Text:** insert immediately, in-place cursor editing, live timeline reflection, double-click edit.
+- **Editing:** copy/paste clip, undo/redo, keyboard shortcuts (space, arrows, h/l, t, Ctrl +/-).
+- **Project:** save/open git-trackable `.jvp`, sidecar assets, hierarchical format, `.gitignore`.
+
+---
+
+## Known caveats
+
+- **Lossless export (CRF 0)** produces large files and slower encodes. Can be dialed to a visually-lossless CRF (~12) for sane sizes on request.
+- **Live audio playback** is verified to produce sound via the proven mixer (export path), but the live `AVAudioEngine` output could not be confirmed in a headless environment — **verify on device**. If silent, run `make run-direct` and check Console for `johnvideo: play engine …`.
+- **Resize/rotate handle hit-areas** use the unrotated position, so grabbing handles on a heavily rotated clip is approximate.
+- **Editing during playback** is not locked against the audio render thread (fine for single-user editing; benign for the live-recording waveform read).
+- **Video decode** is single-threaded, decode-on-demand at the playhead; fast scrubbing of long clips may stutter.
+- **Project media** with real source files is referenced by absolute path; moving those files breaks the reference (sidecar assets are relative and safe).
+- **Recording** is capped at 10 minutes per take (fixed-capacity capture buffer).
+
+---
+
+## Tests (headless)
+
+```sh
+# engine -> MP4 (compositor + mixer + encode/mux)
+clang test/test_export.c build/obj/engine/*.o $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale libswresample) -o build/test_export
+
+# orientation probes and .jvp round-trip are .mm; link Cocoa + Project.mm/Media.mm as needed
+```
+
+`make` first to produce `build/obj/engine/*.o`. The orientation probes (`test_orient.mm`, `test_display.mm`) document why the preview is non-flipped with top-down buffers.
