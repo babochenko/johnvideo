@@ -138,22 +138,28 @@ Clip     { type, start_time, duration, in_offset, union payload }
 
 | Key | Action |
 |---|---|
-| Space | Play / stop (playback rewinds to the start when it reaches the end) |
+| Space | Play / stop (▶/⏸). At the end it holds on the last frame; pressing play again restarts from the start |
 | ← / → | Move the playhead ∓ 0.5 s |
-| h / l | Select previous / next clip (by start time) |
-| j / k | Move selection down / up between tracks (starts at the top) |
-| m | Add a marker at the playhead |
+| h / l | Select previous / next clip on the current track (wraps) |
+| j / k | Move focus down / up between tracks (j wraps to top, k to bottom; defaults top/bottom) |
+| Cmd + h / l | Move the selected object(s) ∓ 0.5 s along the timeline |
+| Cmd + ← / → | Jump the playhead through {start, markers…, end} |
 | Ctrl + ← / → , Ctrl + h / l | Jump the playhead to the previous / next marker |
+| m | Add a marker at the playhead |
 | t | Add text at the playhead (enters in-place edit) |
 | Ctrl + `+` / `-` | Zoom timeline in / out |
-| Delete / Backspace | Delete the marker at the playhead, else the selected clip |
+| Delete / Backspace | Delete the marker at the playhead, else the selected clip (works on the preview too) |
 | Cmd/Ctrl + C / V | Copy / paste clip (paste falls back to image from clipboard) |
 | Cmd/Ctrl + Z / Shift + Z | Undo / redo |
 | Cmd + S / Cmd + O | Save / Open project |
 
-**Markers**: yellow flags on the timeline. Add with `m` or right-click the ruler → Add Marker Here; delete with Backspace at the playhead or right-click → Delete Marker; jump with Ctrl+←/→ or Ctrl+h/l; saved in the project (`mark <t>` lines); undoable.
+**Selection**: click a clip to select; **Cmd+click** to toggle multiple into the selection — dragging any of them moves them all together.
 
-**Editing text**: double-click a text clip on the **preview** or the **timeline** to edit it in place with a cursor.
+**Markers**: yellow flags on the timeline, **draggable** to reposition. Add with `m` or right-click the ruler → Add Marker Here; delete with Backspace at the playhead or right-click → Delete Marker; jump with Cmd+←/→ (incl. start/end) or Ctrl+←/→ / Ctrl+h/l; saved in the project (`mark <t>` lines); undoable.
+
+**Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes/backspace edit live (reflected on the timeline); Return/Esc commits. (Implemented by capturing keys directly, not an overlay field.)
+
+**Cursors**: the pointer shows a resize cursor over clip edges and markers, and resize/rotate cursors over the preview handles.
 
 ---
 

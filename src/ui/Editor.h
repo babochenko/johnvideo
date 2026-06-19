@@ -32,8 +32,16 @@ static const CGFloat kRulerHeight = 18.0;
 - (void)addTextAtCanvasX:(float)cx y:(float)cy time:(double)t;
 
 // Selection (a clip is identified by its track + clip pointer).
-- (void)selectTrack:(jv_track *)t clip:(jv_clip *)c;
-- (jv_clip *)selectedClip;
+- (void)selectTrack:(jv_track *)t clip:(jv_clip *)c;   // single-select
+- (jv_clip *)selectedClip;                              // primary selection
+- (void)toggleSelectClip:(jv_clip *)c;                  // cmd+click multi-select
+- (BOOL)isClipSelected:(jv_clip *)c;
+- (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta;  // move-together drag
+
+// Move the selected object(s) along the timeline (cmd+h/l).
+- (void)nudgeSelectedBy:(double)seconds;
+// Jump the playhead through {0, markers..., end} (cmd + arrows).
+- (void)jumpStartMarksEnd:(int)dir;
 
 // Transport / navigation (keyboard).
 - (void)transportToggle;                 // space

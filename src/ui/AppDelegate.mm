@@ -75,6 +75,7 @@ static const CGFloat kTimelineHeight = 240.0;
     jv_clip            _clipboard;       // copied clip (deep)
     BOOL               _hasClipboard;
     NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
+    NSMutableArray<NSValue *> *_selection; // all selected clips (primary = _selected)
 }
 
 // ---- Setup ----
@@ -90,6 +91,7 @@ static const CGFloat kTimelineHeight = 240.0;
     _audio.timeline = _timeline;
     _undo = [NSMutableArray array];
     _redo = [NSMutableArray array];
+    _selection = [NSMutableArray array];
     _focusTrack = -1;
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
@@ -133,7 +135,7 @@ static const CGFloat kTimelineHeight = 240.0;
         x += bw + gap;
         return b;
     };
-    _playButton = mk(@"Play", @selector(togglePlay));
+    _playButton = mk(@"▶", @selector(togglePlay));
     _recButton  = mk(@"● Rec", @selector(toggleRecord));
     mk(@"Import…", @selector(importMedia));
     mk(@"Export…", @selector(exportMovie));
@@ -228,6 +230,7 @@ static const CGFloat kTimelineHeight = 240.0;
 
 - (void)selectTrack:(jv_track *)t clip:(jv_clip *)c {
     _selected = c;
+    [_selection setArray:c ? @[ [NSValue valueWithPointer:c] ] : @[]];
     // Keep the navigation focus on the selected clip's track.
     if (c) {
         for (size_t i = 0; i < _timeline->track_count; i++) {
@@ -236,6 +239,63 @@ static const CGFloat kTimelineHeight = 240.0;
                 if (&tr->clips[j] == c) { _focusTrack = (NSInteger)i; return; }
         }
     }
+}
+
+- (BOOL)isClipSelected:(jv_clip *)c {
+    return [_selection containsObject:[NSValue valueWithPointer:c]];
+}
+
+- (void)toggleSelectClip:(jv_clip *)c {
+    if (!c) return;
+    NSValue *v = [NSValue valueWithPointer:c];
+    if ([_selection containsObject:v]) {
+        [_selection removeObject:v];
+        if (_selected == c) _selected = _selection.count ? (jv_clip *)_selection.lastObject.pointerValue : NULL;
+    } else {
+        [_selection addObject:v];
+        _selected = c;
+    }
+    [self refreshAll];
+}
+
+- (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta {
+    for (NSValue *v in _selection) {
+        jv_clip *o = (jv_clip *)v.pointerValue;
+        if (o == c) continue;
+        double s = o->start_time + delta;
+        o->start_time = s < 0 ? 0 : s;
+    }
+}
+
+- (void)nudgeSelectedBy:(double)seconds {
+    if (_selection.count == 0) return;
+    [self recordUndo];
+    for (NSValue *v in _selection) {
+        jv_clip *o = (jv_clip *)v.pointerValue;
+        double s = o->start_time + seconds;
+        o->start_time = s < 0 ? 0 : s;
+    }
+    [self refreshAll];
+}
+
+- (void)jumpStartMarksEnd:(int)dir {
+    double dur = jv_timeline_duration(_timeline);
+    // Candidate stops: start, every marker, end.
+    NSMutableArray<NSNumber *> *stops = [NSMutableArray arrayWithObject:@(0.0)];
+    for (size_t i = 0; i < _timeline->marker_count; i++) [stops addObject:@(_timeline->markers[i])];
+    [stops addObject:@(dur)];
+    [stops sortUsingSelector:@selector(compare:)];
+    const double eps = 1e-4;
+    double best = _playhead; int got = 0;
+    for (NSNumber *n in stops) {
+        double s = n.doubleValue;
+        if (dir > 0 && s > _playhead + eps) { if (!got || s < best) { best = s; got = 1; } }
+        else if (dir < 0 && s < _playhead - eps) { if (!got || s > best) { best = s; got = 1; } }
+    }
+    if (!got) return;
+    if (_transportPlaying) [self stopTransport];
+    _playhead = best;
+    [self refreshAll];
 }
 
 // Clips of a track, sorted by start time (returns clip pointers).
@@ -375,10 +435,12 @@ static const CGFloat kTimelineHeight = 240.0;
 
 - (void)togglePlay {
     if (_transportPlaying) { [self stopTransport]; return; }
+    double dur = jv_timeline_duration(_timeline);
+    if (dur > 0 && _playhead >= dur - 1e-6) _playhead = 0;   // at the end -> restart from the beginning
     _transportPlaying = YES;
     [self startClockFrom:_playhead];
     [_audio playFrom:_playhead];          // best effort; visuals don't depend on it
-    _playButton.title = @"Pause";
+    _playButton.title = @"⏸";
     [self startTick];
 }
 
@@ -387,10 +449,10 @@ static const CGFloat kTimelineHeight = 240.0;
     _transportPlaying = NO;
     [_audio stop];
     [self stopTick];
-    _playButton.title = @"Play";
+    _playButton.title = @"▶";
 }
 
-- (void)updatePlayButton { _playButton.title = _transportPlaying ? @"Pause" : @"Play"; }
+- (void)updatePlayButton { _playButton.title = _transportPlaying ? @"⏸" : @"▶"; }
 
 - (void)startTick {
     [self stopTick];
@@ -408,7 +470,7 @@ static const CGFloat kTimelineHeight = 240.0;
         double dur = jv_timeline_duration(self->_timeline);
         if (self->_transportPlaying && dur > 0 && self->_playhead >= dur) {
             [self stopTransport];
-            self->_playhead = 0;   // rewind to the start when playback finishes
+            self->_playhead = dur;   // hold at the last frame; pressing play restarts from 0
         }
         [self refreshAll];
     }];
@@ -569,6 +631,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 
 - (void)swapTimelineTo:(jv_timeline *)tl {
     _selected = NULL;
+    [_selection removeAllObjects];
     _liveRecClip = NULL;
     _timeline = tl;
     _audio.timeline = tl;
@@ -633,6 +696,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 - (void)selectClipAndSeek:(jv_clip *)c {
     if (!c) return;
     _selected = c;
+    [_selection setArray:@[ [NSValue valueWithPointer:c] ]];
     if (_transportPlaying) [self stopTransport];
     _playhead = c->start_time;
     [self refreshAll];
@@ -663,6 +727,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
         if (d < bestD) { bestD = d; best = &t->clips[j]; }
     }
     _selected = best;
+    [_selection setArray:best ? @[ [NSValue valueWithPointer:best] ] : @[]];
     [self refreshAll];
 }
 
@@ -697,6 +762,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
                 memmove(&t->clips[j], &t->clips[j + 1], (t->clip_count - j - 1) * sizeof(jv_clip));
                 t->clip_count--;
                 if (_selected == clip) _selected = NULL;
+                [_selection removeObject:[NSValue valueWithPointer:clip]];
                 return;
             }
         }

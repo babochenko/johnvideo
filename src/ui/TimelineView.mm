@@ -37,6 +37,13 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 - (void)mouseMoved:(NSEvent *)e {
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     NSCursor *cur = [NSCursor arrowCursor];
+    if (p.y < kRulerHeight) {
+        jv_timeline *tl = [self.host timeline];
+        for (size_t i = 0; i < tl->marker_count; i++)
+            if (fabs([self xForTime:tl->markers[i]] - p.x) < 6) { cur = [NSCursor resizeLeftRightCursor]; break; }
+        [cur set];
+        return;
+    }
     if (p.y >= kRulerHeight && p.x >= kHeaderWidth) {
         jv_track *t = NULL; size_t idx = 0;
         jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
@@ -206,7 +213,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
             [bp fill];
             if (c->type == JV_CLIP_AUDIO && c->u.audio.pcm)
                 [self drawWaveformForClip:c inRect:inner];
-            if (c == sel) {
+            if ([self.host isClipSelected:c]) {
                 [[NSColor whiteColor] setStroke];
                 [bp setLineWidth:2];
                 [bp stroke];
@@ -271,8 +278,9 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     jv_track *t = NULL; size_t idx = 0;
     jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
     if (c) {
+        if (e.modifierFlags & NSEventModifierFlagCommand) { [self.host toggleSelectClip:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];
-        [self.host selectTrack:t clip:c];
+        if (![self.host isClipSelected:c]) [self.host selectTrack:t clip:c];   // keep multi-selection if part of it
         NSRect r = [self rectForClip:c onTrack:idx];
         if (p.x > NSMaxX(r) - 8) {            // right edge => trim end
             _drag = DRAG_TRIM;
@@ -353,7 +361,10 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         double sStart = [self snapBoundary:ns excluding:_dragClip];
         double sEnd   = [self snapBoundary:ns + dur excluding:_dragClip];
         if (fabs(sStart - ns) <= fabs(sEnd - (ns + dur))) ns = sStart; else ns = sEnd - dur;
-        _dragClip->start_time = ns < 0 ? 0 : ns;
+        if (ns < 0) ns = 0;
+        double oldStart = _dragClip->start_time;
+        _dragClip->start_time = ns;
+        [self.host shiftSelectionExcept:_dragClip by:ns - oldStart];   // move-together
         [self.host refreshAll];
     } else if (_drag == DRAG_TRIM && _dragClip) {
         double end = [self snapBoundary:t excluding:_dragClip];
@@ -496,6 +507,13 @@ static int cmp_double(const void *a, const void *b) {
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
+    if (m & NSEventModifierFlagCommand) {            // Cmd-based shortcuts
+        if (lk == 'h') { [self.host nudgeSelectedBy:-0.5]; return; }   // move object
+        if (lk == 'l') { [self.host nudgeSelectedBy:0.5];  return; }
+        if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }
+        if (k == NSRightArrowFunctionKey) { [self.host jumpStartMarksEnd:1];  return; }
+        return;
+    }
     if (m & NSEventModifierFlagControl) {            // Ctrl-based shortcuts
         if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }
         if (lk == 'c') { [self.host copySelectedClip]; return; }

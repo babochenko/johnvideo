@@ -9,16 +9,14 @@ typedef enum { PV_NONE, PV_MOVE, PV_RESIZE, PV_ROTATE } pv_mode;
 
 static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
 
-@interface PreviewView () <NSTextFieldDelegate>
-@end
-
 @implementation PreviewView {
-    NSRect       _videoRect;   // where the composited frame is drawn (letterboxed)
-    jv_clip     *_dragClip;    // visual clip being dragged on the canvas
-    NSPoint      _grab;        // pointer offset from the clip center at grab time
-    pv_mode      _mode;
-    NSTextField *_editField;   // in-place text editor overlay
-    jv_clip     *_editClip;    // text clip currently being edited
+    NSRect           _videoRect;   // where the composited frame is drawn (letterboxed)
+    jv_clip         *_dragClip;    // visual clip being dragged on the canvas
+    NSPoint          _grab;        // pointer offset from the clip center at grab time
+    pv_mode          _mode;
+    BOOL             _editing;     // typing into a text clip in place
+    jv_clip         *_editClip;    // text clip being edited
+    NSMutableString *_editText;    // working copy of the edited string
 }
 
 - (instancetype)initWithFrame:(NSRect)f {
@@ -313,6 +311,13 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         [[NSBezierPath bezierPathWithRect:NSMakeRect(NSMaxX(r) - 5, NSMinY(r) - 5, 10, 10)] fill];
         [gctx restoreGraphicsState];
     }
+
+    // Text-edit caret: a bar at the right edge of the edited clip.
+    if (_editing && _editClip) {
+        NSRect r = [self displayRectForClip:_editClip];
+        [[NSColor whiteColor] setFill];
+        NSRectFill(NSMakeRect(NSMaxX(r) + 1, NSMinY(r), 2, r.size.height));
+    }
 }
 
 // ---- Right-click: add text ----
@@ -345,64 +350,67 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     c->u.text.width = w; c->u.text.height = h;
 }
 
+// We edit text by capturing keystrokes directly (the preview is the first
+// responder), instead of overlaying an NSTextField — far more reliable.
 - (void)beginEditingTextClip:(jv_clip *)c {
     [self commitTextEditing];
     _editClip = c;
-    _videoRect = [self fitRect];          // ensure geometry is current (may run before first draw)
-    jv_timeline *tl = [self.host timeline];
-    CGFloat sc = _videoRect.size.height / (tl && tl->height > 0 ? tl->height : 1080);
-
-    NSRect r = [self displayRectForClip:c];
-    CGFloat w = fmax(r.size.width + 24, 80), h = fmax(r.size.height + 12, 28);
-    NSRect fr = NSMakeRect([self centerForClip:c].x - w / 2, [self centerForClip:c].y - h / 2, w, h);
-    _editField = [[NSTextField alloc] initWithFrame:fr];
-    _editField.stringValue = c->u.text.string ? @(c->u.text.string) : @"";
-    _editField.editable = YES;
-    _editField.selectable = YES;
-    _editField.bordered = NO;
-    _editField.drawsBackground = YES;
-    _editField.backgroundColor = [NSColor colorWithWhite:0 alpha:0.4];
-    _editField.textColor = [NSColor whiteColor];
-    _editField.focusRingType = NSFocusRingTypeNone;
-    _editField.alignment = NSTextAlignmentCenter;
-    _editField.font = [NSFont boldSystemFontOfSize:fmax(10, c->u.text.font_size * sc)];
-    _editField.delegate = self;
-    [self addSubview:_editField];
-    [self.window makeFirstResponder:_editField];
-    [_editField selectText:nil];
-}
-
-- (void)controlTextDidChange:(NSNotification *)note {
-    if (!_editClip) return;
-    NSString *s = _editField.stringValue;
-    free(_editClip->u.text.string);
-    _editClip->u.text.string = strdup(s.UTF8String);
-    [self rerasterizeText:_editClip];     // live: updates canvas bitmap + timeline label
+    _editing = YES;
+    _editText = [NSMutableString stringWithUTF8String:(c->u.text.string ? c->u.text.string : "")];
+    [self.window makeFirstResponder:self];
     [self.host refreshAll];
 }
 
-- (void)controlTextDidEndEditing:(NSNotification *)note { [self commitTextEditing]; }
+- (void)applyEditedText {
+    if (!_editClip) return;
+    free(_editClip->u.text.string);
+    _editClip->u.text.string = strdup(_editText.UTF8String);
+    [self rerasterizeText:_editClip];   // live: canvas bitmap + timeline label
+    [self.host refreshAll];
+}
+
+// Handle a key while editing; returns YES if consumed.
+- (BOOL)handleEditingKey:(NSEvent *)e {
+    if (!_editing) return NO;
+    NSString *ig = e.charactersIgnoringModifiers;
+    unichar k = ig.length ? [ig characterAtIndex:0] : 0;
+    if (k == 0x0D || k == 0x03 || k == 0x1B) { [self commitTextEditing]; return YES; }   // return / enter / esc
+    if (k == NSDeleteCharacter || k == 0x08) {                                            // backspace
+        if (_editText.length) [_editText deleteCharactersInRange:NSMakeRange(_editText.length - 1, 1)];
+        [self applyEditedText];
+        return YES;
+    }
+    NSString *ins = e.characters;
+    if (ins.length && [ins characterAtIndex:0] >= 0x20) { [_editText appendString:ins]; [self applyEditedText]; return YES; }
+    return YES;   // swallow other keys while editing
+}
 
 - (void)commitTextEditing {
-    if (!_editField) return;
+    if (!_editing) return;
     if (_editClip) {
-        NSString *s = _editField.stringValue;
-        free(_editClip->u.text.string);
-        _editClip->u.text.string = strdup(s.length ? s.UTF8String : "Text");
-        [self rerasterizeText:_editClip];
+        if (_editText.length == 0) [_editText setString:@"Text"];
+        [self applyEditedText];
     }
-    [_editField removeFromSuperview];
-    _editField = nil;
+    _editing = NO;
     _editClip = NULL;
+    _editText = nil;
     [self.host refreshAll];
 }
 
 // ---- Paste (Cmd+V) ----
 - (void)keyDown:(NSEvent *)e {
+    if (_editing) { [self handleEditingKey:e]; return; }   // typing into a text clip
     NSString *chars = e.charactersIgnoringModifiers;
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
+    if (m & NSEventModifierFlagCommand) {
+        if (lk == 'h') { [self.host nudgeSelectedBy:-0.5]; return; }   // move object
+        if (lk == 'l') { [self.host nudgeSelectedBy:0.5];  return; }
+        if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }
+        if (k == NSRightArrowFunctionKey) { [self.host jumpStartMarksEnd:1];  return; }
+        return;
+    }
     if (m & NSEventModifierFlagControl) {
         if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }
         if (lk == 'c') { [self.host copySelectedClip]; return; }
@@ -422,6 +430,9 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     if (lk == 'k') { [self.host focusTrack:-1]; return; }
     if (lk == 't') { [self.host addTextAtPlayhead]; return; }
     if (lk == 'm') { [self.host addMarkerAtPlayhead]; return; }
+    if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) {
+        [self.host deleteSelectedClip]; return;   // backspace deletes the selected object
+    }
     [super keyDown:e];
 }
 
