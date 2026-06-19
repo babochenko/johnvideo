@@ -18,6 +18,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
     jv_clip         *_editClip;    // text clip being edited
     NSMutableString *_editText;    // working copy of the edited string
     BOOL             _editSelAll;  // whole-string selection (cmd+a)
+    NSUInteger       _editCaret;   // caret index into _editText
 }
 
 - (BOOL)becomeFirstResponder { return YES; }
@@ -321,9 +322,23 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     // Text-edit caret (+ select-all highlight) on the edited clip.
     if (_editing && _editClip) {
         NSRect r = [self displayRectForClip:_editClip];
-        if (_editSelAll) { [[NSColor colorWithSRGBRed:0.3 green:0.5 blue:1 alpha:0.35] setFill]; NSRectFill(NSInsetRect(r, -2, -2)); }
+        if (_editSelAll) {
+            [[NSColor colorWithSRGBRed:0.3 green:0.5 blue:1 alpha:0.35] setFill];
+            NSRectFill(NSInsetRect(r, -2, -2));
+        }
+        // Locate the caret: line index + the current line's prefix width.
+        NSString *upto = [_editText substringToIndex:(_editCaret <= _editText.length ? _editCaret : _editText.length)];
+        NSArray<NSString *> *uptoLines = [upto componentsSeparatedByString:@"\n"];
+        NSUInteger line = uptoLines.count - 1;
+        NSUInteger nLines = [[_editText componentsSeparatedByString:@"\n"] count];
+        NSDictionary *fa = @{ NSFontAttributeName: [NSFont boldSystemFontOfSize:_editClip->u.text.font_size] };
+        CGFloat prefixW = [uptoLines.lastObject sizeWithAttributes:fa].width;
+        CGFloat bmpW = _editClip->u.text.width > 0 ? _editClip->u.text.width : 1;
+        CGFloat caretX = r.origin.x + ((4 + prefixW) / bmpW) * r.size.width;
+        CGFloat top    = NSMaxY(r) - ((CGFloat)line / nLines) * r.size.height;
+        CGFloat bottom = NSMaxY(r) - ((CGFloat)(line + 1) / nLines) * r.size.height;
         [[NSColor whiteColor] setFill];
-        NSRectFill(NSMakeRect(NSMaxX(r) + 1, NSMinY(r), 2, r.size.height));
+        NSRectFill(NSMakeRect(caretX, bottom, 2, top - bottom));
     }
 }
 
@@ -365,8 +380,42 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     _editing = YES;
     _editSelAll = YES;   // start with the whole string selected (type to replace)
     _editText = [NSMutableString stringWithUTF8String:(c->u.text.string ? c->u.text.string : "")];
+    _editCaret = _editText.length;
     [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:self];
+    [self.host refreshAll];
+}
+
+// Insert / delete operate at the caret (clearing a select-all first).
+- (void)insertEditString:(NSString *)s {
+    if (_editSelAll) { [_editText setString:s]; _editSelAll = NO; _editCaret = s.length; }
+    else { if (_editCaret > _editText.length) _editCaret = _editText.length;
+           [_editText insertString:s atIndex:_editCaret]; _editCaret += s.length; }
+    [self applyEditedText];
+}
+- (void)deleteEditBackward {
+    if (_editSelAll) { [_editText setString:@""]; _editSelAll = NO; _editCaret = 0; }
+    else if (_editCaret > 0) { [_editText deleteCharactersInRange:NSMakeRange(_editCaret - 1, 1)]; _editCaret--; }
+    [self applyEditedText];
+}
+
+// Move the caret up/down a line, keeping the column where possible.
+- (void)moveCaretLine:(int)dir {
+    _editSelAll = NO;
+    NSArray<NSString *> *lines = [_editText componentsSeparatedByString:@"\n"];
+    NSUInteger pos = 0, line = 0, col = 0;
+    for (NSUInteger i = 0; i < lines.count; i++) {
+        NSUInteger len = lines[i].length;
+        if (_editCaret <= pos + len) { line = i; col = _editCaret - pos; break; }
+        pos += len + 1;
+    }
+    NSInteger target = (NSInteger)line + dir;
+    if (target < 0 || target >= (NSInteger)lines.count) { [self.host refreshAll]; return; }
+    NSUInteger tlen = [lines[(NSUInteger)target] length];
+    NSUInteger ncol = col < tlen ? col : tlen;
+    NSUInteger newCaret = 0;
+    for (NSInteger i = 0; i < target; i++) newCaret += [lines[(NSUInteger)i] length] + 1;
+    _editCaret = newCaret + ncol;
     [self.host refreshAll];
 }
 
@@ -395,26 +444,21 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         if (lk == 'a') { _editSelAll = YES; [self.host refreshAll]; return YES; }       // select all
         if (lk == 'c') { [pb clearContents]; [pb setString:_editText forType:NSPasteboardTypeString]; return YES; }
         if (lk == 'x') { [pb clearContents]; [pb setString:_editText forType:NSPasteboardTypeString];
-                         [_editText setString:@""]; _editSelAll = NO; [self applyEditedText]; return YES; }
-        if (lk == 'v') { NSString *s = [pb stringForType:NSPasteboardTypeString];
-                         [self clearSelectionIfAny]; if (s.length) [_editText appendString:s]; [self applyEditedText]; return YES; }
+                         [_editText setString:@""]; _editSelAll = NO; _editCaret = 0; [self applyEditedText]; return YES; }
+        if (lk == 'v') { NSString *s = [pb stringForType:NSPasteboardTypeString]; if (s.length) [self insertEditString:s]; return YES; }
         return YES;   // swallow other modified keys while editing
     }
+    // Arrow keys move the caret; never insert (they live in the function-key range).
+    if (k == NSLeftArrowFunctionKey)  { _editSelAll = NO; if (_editCaret > 0) _editCaret--; [self.host refreshAll]; return YES; }
+    if (k == NSRightArrowFunctionKey) { _editSelAll = NO; if (_editCaret < _editText.length) _editCaret++; [self.host refreshAll]; return YES; }
+    if (k == NSUpArrowFunctionKey)    { [self moveCaretLine:-1]; return YES; }
+    if (k == NSDownArrowFunctionKey)  { [self moveCaretLine:1];  return YES; }
+    if (k >= 0xF700 && k <= 0xF8FF) return YES;   // ignore other function keys (F-keys, etc.)
     if (k == 0x1B) { [self commitTextEditing]; return YES; }                            // esc commits
-    if (k == 0x0D || k == 0x03) { [self clearSelectionIfAny]; [_editText appendString:@"\n"]; [self applyEditedText]; return YES; }
-    if (k == NSDeleteCharacter || k == 0x08) {                                          // backspace
-        if (_editSelAll) { [_editText setString:@""]; _editSelAll = NO; }
-        else if (_editText.length) [_editText deleteCharactersInRange:NSMakeRange(_editText.length - 1, 1)];
-        [self applyEditedText];
-        return YES;
-    }
+    if (k == 0x0D || k == 0x03) { [self insertEditString:@"\n"]; return YES; }          // return = newline
+    if (k == NSDeleteCharacter || k == 0x08) { [self deleteEditBackward]; return YES; }  // backspace
     NSString *ins = e.characters;
-    if (ins.length && [ins characterAtIndex:0] >= 0x20) {
-        [self clearSelectionIfAny];
-        [_editText appendString:ins];
-        [self applyEditedText];
-        return YES;
-    }
+    if (ins.length && [ins characterAtIndex:0] >= 0x20) { [self insertEditString:ins]; return YES; }
     return YES;   // swallow other keys while editing
 }
 
@@ -471,11 +515,9 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 }
 
 - (void)paste:(id)sender {
-    if (_editing) {                                   // paste text into the edited clip
+    if (_editing) {                                   // paste text into the edited clip at the caret
         NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-        [self clearSelectionIfAny];
-        if (s.length) [_editText appendString:s];
-        [self applyEditedText];
+        if (s.length) [self insertEditString:s];
         return;
     }
     if ([self.host pasteClipAtPlayhead]) return;

@@ -13,8 +13,8 @@
 #include "export.h"
 #import "Project.h"
 
-static const double kImageDuration = 4.0;
-static const double kTextDuration  = 3.0;
+static const double kImageDuration = 1.0;
+static const double kTextDuration  = 1.0;
 static const CGFloat kTimelineHeight = 240.0;
 
 // A transient bottom-right toast. If it carries a fileURL, clicking it opens
@@ -243,6 +243,17 @@ static const CGFloat kTimelineHeight = 240.0;
     for (size_t i = 0; i < _timeline->track_count; i++)
         if (_timeline->tracks[i].kind == kind) found = &_timeline->tracks[i];
     return found;
+}
+
+// Where to drop a newly inserted clip on a track: at `t`, or after the last
+// clip already there (so repeated inserts line up one after another).
+- (double)appendTimeOnTrack:(jv_track *)t atLeast:(double)t0 {
+    double end = t0;
+    for (size_t j = 0; j < t->clip_count; j++) {
+        double e = t->clips[j].start_time + t->clips[j].duration;
+        if (e > end) end = e;
+    }
+    return end;
 }
 
 - (BOOL)timelineEmpty {
@@ -475,7 +486,7 @@ static const CGFloat kTimelineHeight = 240.0;
     if (!rgba) { NSBeep(); return; }
 
     jv_track *vt = [self firstTrackOfKind:JV_TRACK_VISUAL];
-    jv_clip *c = jv_track_add_clip(vt, JV_CLIP_IMAGE, t, kImageDuration);
+    jv_clip *c = jv_track_add_clip(vt, JV_CLIP_IMAGE, [self appendTimeOnTrack:vt atLeast:t], kImageDuration);
     c->u.image.rgba = rgba;
     c->u.image.width = w;
     c->u.image.height = h;
@@ -782,9 +793,10 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     jv_track *dst = [self firstTrackOfKind:wantAudio ? JV_TRACK_AUDIO : JV_TRACK_VISUAL];
     if (!dst) return NO;
     [self recordUndo];
-    jv_clip *c = jv_track_add_clip(dst, _clipboard.type, _playhead, _clipboard.duration);
+    double at = [self appendTimeOnTrack:dst atLeast:_playhead];   // line up after existing clips
+    jv_clip *c = jv_track_add_clip(dst, _clipboard.type, at, _clipboard.duration);
     clone_clip_payload(c, &_clipboard);
-    c->start_time = _playhead;
+    c->start_time = at;
     [self selectTrack:dst clip:c];
     [self refreshAll];
     return YES;
