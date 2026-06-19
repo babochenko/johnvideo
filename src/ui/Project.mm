@@ -84,7 +84,7 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
             switch (c->type) {
                 case JV_CLIP_IMAGE: {
                     jv_image *im = &c->u.image;
-                    fprintf(f, "  clip image %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                    fprintf(f, "  clip image start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f\n",
                             c->start_time, c->duration, c->in_offset, im->cx, im->cy, im->scale, im->rotation);
                     BOOL hasFile = im->path && [fm fileExistsAtPath:@(im->path)];
                     if (hasFile) fprintf(f, "    src %s\n", im->path);
@@ -97,7 +97,7 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
                 }
                 case JV_CLIP_TEXT: {
                     jv_text *tx = &c->u.text;
-                    fprintf(f, "  clip text %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f 0x%08X\n",
+                    fprintf(f, "  clip text start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f font=%.4f color=0x%08X\n",
                             c->start_time, c->duration, c->in_offset, tx->cx, tx->cy,
                             tx->scale, tx->rotation, tx->font_size, tx->color);
                     fprintf(f, "    str %s\n", tx->string ? tx->string : "");
@@ -105,14 +105,14 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
                 }
                 case JV_CLIP_VIDEO: {
                     jv_video *v = &c->u.video;
-                    fprintf(f, "  clip video %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                    fprintf(f, "  clip video start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f\n",
                             c->start_time, c->duration, c->in_offset, v->cx, v->cy, v->scale, v->rotation);
                     if (v->path) fprintf(f, "    src %s\n", v->path);
                     break;
                 }
                 case JV_CLIP_AUDIO: {
                     jv_audio *a = &c->u.audio;
-                    fprintf(f, "  clip audio %.4f %.4f %.4f %.4f %d\n",
+                    fprintf(f, "  clip audio start=%.4f dur=%.4f in=%.4f gain=%.4f rate=%d\n",
                             c->start_time, c->duration, c->in_offset, a->gain, a->sample_rate);
                     BOOL hasFile = a->path && [fm fileExistsAtPath:@(a->path)];
                     if (hasFile) fprintf(f, "    src %s\n", a->path);
@@ -152,6 +152,18 @@ static void loadAudioInto(jv_clip *c, NSString *file) {
     }
 }
 
+// Read a labeled "key=value" field from a line (order-independent).
+static double pf(const char *s, const char *key, double def) {
+    char pat[24]; snprintf(pat, sizeof pat, "%s=", key);
+    const char *q = strstr(s, pat);
+    return q ? atof(q + strlen(pat)) : def;
+}
+static unsigned int pfhex(const char *s, const char *key, unsigned int def) {
+    char pat[24]; snprintf(pat, sizeof pat, "%s=", key);
+    const char *q = strstr(s, pat);
+    return q ? (unsigned int)strtoul(q + strlen(pat), NULL, 0) : def;
+}
+
 jv_timeline *jv_project_load(NSString *path) {
     NSString *base = [path stringByDeletingLastPathComponent];
     NSError *err = nil;
@@ -178,33 +190,32 @@ jv_timeline *jv_project_load(NSString *path) {
             curTrack = jv_timeline_add_track(tl, kind == 'A' ? JV_TRACK_AUDIO : JV_TRACK_VISUAL, name);
             curClip = NULL;
         } else if (strncmp(s, "clip ", 5) == 0 && curTrack) {
-            double st, du, io, cx, cy, sc, ro, fs, gn; unsigned int col; int sr;
-            char type[16];
+            char type[16] = {0};
             sscanf(s, "clip %15s", type);
-            if (strcmp(type, "image") == 0 &&
-                sscanf(s, "clip image %lf %lf %lf %lf %lf %lf %lf", &st, &du, &io, &cx, &cy, &sc, &ro) == 7) {
+            double st = pf(s, "start", 0), du = pf(s, "dur", 0), io = pf(s, "in", 0);
+            double cx = pf(s, "cx", 0.5), cy = pf(s, "cy", 0.5), sc = pf(s, "scale", 1), ro = pf(s, "rot", 0);
+            if (strcmp(type, "image") == 0) {
                 curClip = jv_track_add_clip(curTrack, JV_CLIP_IMAGE, st, du);
                 curClip->in_offset = io;
                 curClip->u.image.cx = cx; curClip->u.image.cy = cy;
                 curClip->u.image.scale = sc; curClip->u.image.rotation = ro;
-            } else if (strcmp(type, "text") == 0 &&
-                sscanf(s, "clip text %lf %lf %lf %lf %lf %lf %lf %lf 0x%x", &st, &du, &io, &cx, &cy, &sc, &ro, &fs, &col) == 9) {
+            } else if (strcmp(type, "text") == 0) {
                 curClip = jv_track_add_clip(curTrack, JV_CLIP_TEXT, st, du);
                 curClip->in_offset = io;
                 curClip->u.text.cx = cx; curClip->u.text.cy = cy;
                 curClip->u.text.scale = sc; curClip->u.text.rotation = ro;
-                curClip->u.text.font_size = fs; curClip->u.text.color = col;
-            } else if (strcmp(type, "video") == 0 &&
-                sscanf(s, "clip video %lf %lf %lf %lf %lf %lf %lf", &st, &du, &io, &cx, &cy, &sc, &ro) == 7) {
+                curClip->u.text.font_size = pf(s, "font", 64);
+                curClip->u.text.color = pfhex(s, "color", 0xFFFFFFFF);
+            } else if (strcmp(type, "video") == 0) {
                 curClip = jv_track_add_clip(curTrack, JV_CLIP_VIDEO, st, du);
                 curClip->in_offset = io;
                 curClip->u.video.cx = cx; curClip->u.video.cy = cy;
                 curClip->u.video.scale = sc; curClip->u.video.rotation = ro;
-            } else if (strcmp(type, "audio") == 0 &&
-                sscanf(s, "clip audio %lf %lf %lf %lf %d", &st, &du, &io, &gn, &sr) == 5) {
+            } else if (strcmp(type, "audio") == 0) {
                 curClip = jv_track_add_clip(curTrack, JV_CLIP_AUDIO, st, du);
                 curClip->in_offset = io;
-                curClip->u.audio.gain = gn; curClip->u.audio.sample_rate = sr;
+                curClip->u.audio.gain = pf(s, "gain", 1);
+                curClip->u.audio.sample_rate = (int)pf(s, "rate", 48000);
                 curClip->u.audio.channels = 2;
             }
         } else if (strncmp(s, "str ", 4) == 0 && curClip && curClip->type == JV_CLIP_TEXT) {

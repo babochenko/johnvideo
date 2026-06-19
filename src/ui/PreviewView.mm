@@ -378,8 +378,14 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     NSString *chars = e.charactersIgnoringModifiers;
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
     NSEventModifierFlags m = e.modifierFlags;
-    if ((m & NSEventModifierFlagControl) && (k == '=' || k == '+')) { [self.host zoomBy:1.25]; return; }
-    if ((m & NSEventModifierFlagControl) && (k == '-' || k == '_')) { [self.host zoomBy:0.8];  return; }
+    if (m & NSEventModifierFlagControl) {
+        unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
+        if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }
+        if (lk == 'c') { [self.host copySelectedClip]; return; }
+        if (lk == 'v') { [self paste:nil]; return; }
+        if (k == '=' || k == '+') { [self.host zoomBy:1.25]; return; }
+        if (k == '-' || k == '_') { [self.host zoomBy:0.8];  return; }
+    }
     if (k == ' ') { [self.host transportToggle]; return; }
     if (k == NSLeftArrowFunctionKey  || k == 'h') { [self.host nudgePlayheadBy:-0.5]; return; }
     if (k == NSRightArrowFunctionKey || k == 'l') { [self.host nudgePlayheadBy:0.5];  return; }
@@ -392,6 +398,8 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self ingestPasteboard:[NSPasteboard generalPasteboard] atTime:[self.host playhead]];
 }
 - (void)copy:(id)sender { [self.host copySelectedClip]; }
+- (void)undo:(id)sender { [self.host performUndo]; }
+- (void)redo:(id)sender { [self.host performRedo]; }
 
 // ---- Drag and drop (including from a browser) ----
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)s { return NSDragOperationCopy; }

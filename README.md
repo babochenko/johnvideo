@@ -177,17 +177,17 @@ Plain text, line-based, git-diff friendly. Hierarchical: clips indented 2 spaces
 johnvideo 1
 canvas 1280 720 25.0000
 track V Video 1
-  clip text 1.0000 3.0000 0.0000 0.5000 0.4000 0.0000 0.3000 64.0000 0xFFFFFFFF
+  clip text start=1.0000 dur=3.0000 in=0.0000 cx=0.5000 cy=0.4000 scale=0.0000 rot=0.3000 font=64.0000 color=0xFFFFFFFF
     str Hello World
-  clip image 0.0000 2.0000 0.0000 0.3000 0.3000 0.6000 0.0000
+  clip image start=0.0000 dur=2.0000 in=0.0000 cx=0.3000 cy=0.3000 scale=0.6000 rot=0.0000
     asset project.jvp.assets/img0.png
 
 track A Music
-  clip audio 0.0000 5.0000 0.0000 1.0000 48000
+  clip audio start=0.0000 dur=5.0000 in=0.0000 gain=1.0000 rate=48000
     src /Users/me/music.mp3
 ```
 
-Clip line fields: `start dur in_offset` then per type — image/video: `cx cy scale rotation`; text: `cx cy scale rotation fontpx 0xRRGGBBAA`; audio: `gain sample_rate`.
+Clip fields are labeled `key=value` and parsed order-independently: `start dur in` for every clip; image/video add `cx cy scale rot`; text adds `font color`; audio adds `gain rate`.
 
 ---
 
