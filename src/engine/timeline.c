@@ -57,6 +57,7 @@ void jv_timeline_destroy(jv_timeline *tl) {
         free(t->clips);
     }
     free(tl->tracks);
+    free(tl->markers);
     free(tl);
 }
 
@@ -71,6 +72,7 @@ jv_timeline *jv_timeline_clone(const jv_timeline *src) {
     if (!src) return NULL;
     jv_timeline *tl = jv_timeline_create(src->width, src->height, src->fps);
     tl->playhead = src->playhead;
+    for (size_t i = 0; i < src->marker_count; i++) jv_timeline_add_marker(tl, src->markers[i]);
     for (size_t i = 0; i < src->track_count; i++) {
         const jv_track *st = &src->tracks[i];
         jv_track *t = jv_timeline_add_track(tl, st->kind, st->name);
@@ -183,6 +185,48 @@ void jv_timeline_remove_track(jv_timeline *tl, size_t index) {
     memmove(&tl->tracks[index], &tl->tracks[index + 1],
             (tl->track_count - index - 1) * sizeof(jv_track));
     tl->track_count--;
+}
+
+void jv_timeline_add_marker(jv_timeline *tl, double t) {
+    if (!tl || t < 0) return;
+    if (tl->marker_count == tl->marker_cap) {
+        size_t cap = tl->marker_cap ? tl->marker_cap * 2 : 8;
+        double *g = realloc(tl->markers, cap * sizeof(double));
+        if (!g) return;
+        tl->markers = g; tl->marker_cap = cap;
+    }
+    // Insert keeping the array sorted ascending.
+    size_t i = tl->marker_count;
+    while (i > 0 && tl->markers[i - 1] > t) { tl->markers[i] = tl->markers[i - 1]; i--; }
+    tl->markers[i] = t;
+    tl->marker_count++;
+}
+
+int jv_timeline_remove_marker_near(jv_timeline *tl, double t, double tol) {
+    if (!tl) return 0;
+    size_t best = (size_t)-1; double bestD = tol;
+    for (size_t i = 0; i < tl->marker_count; i++) {
+        double d = fabs(tl->markers[i] - t);
+        if (d <= bestD) { bestD = d; best = i; }
+    }
+    if (best == (size_t)-1) return 0;
+    memmove(&tl->markers[best], &tl->markers[best + 1], (tl->marker_count - best - 1) * sizeof(double));
+    tl->marker_count--;
+    return 1;
+}
+
+double jv_timeline_adjacent_marker(const jv_timeline *tl, double t, int dir, int *found) {
+    if (found) *found = 0;
+    if (!tl) return t;
+    const double eps = 1e-4;
+    double best = t; int got = 0;
+    for (size_t i = 0; i < tl->marker_count; i++) {
+        double m = tl->markers[i];
+        if (dir > 0 && m > t + eps) { if (!got || m < best) { best = m; got = 1; } }
+        else if (dir < 0 && m < t - eps) { if (!got || m > best) { best = m; got = 1; } }
+    }
+    if (found) *found = got;
+    return got ? best : t;
 }
 
 double jv_timeline_duration(const jv_timeline *tl) {

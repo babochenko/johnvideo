@@ -383,8 +383,8 @@ static const CGFloat kTimelineHeight = 240.0;
         // Stop at the end only while playing back (recording may run past it).
         double dur = jv_timeline_duration(self->_timeline);
         if (self->_transportPlaying && dur > 0 && self->_playhead >= dur) {
-            self->_playhead = dur;
             [self stopTransport];
+            self->_playhead = 0;   // rewind to the start when playback finishes
         }
         [self refreshAll];
     }];
@@ -572,6 +572,109 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 - (void)copy:(id)sender { [self copySelectedClip]; }
 - (void)undo:(id)sender { [self performUndo]; }
 - (void)redo:(id)sender { [self performRedo]; }
+
+- (void)deleteSelectedClip {
+    if (!_selected) return;
+    [self recordUndo];
+    [self removeClip:_selected];
+    [self refreshAll];
+}
+
+// ---- Markers ----
+- (void)addMarkerAtPlayhead {
+    [self recordUndo];
+    jv_timeline_add_marker(_timeline, _playhead);
+    [self refreshAll];
+}
+
+- (BOOL)deleteMarkerNearPlayhead {
+    double tol = 8.0 / _pps;   // ~8px
+    [self recordUndo];
+    if (jv_timeline_remove_marker_near(_timeline, _playhead, tol)) { [self refreshAll]; return YES; }
+    // No marker there: discard the no-op snapshot.
+    if (_undo.count) { jv_timeline_destroy((jv_timeline *)[_undo.lastObject pointerValue]); [_undo removeLastObject]; }
+    return NO;
+}
+
+- (void)jumpToMarker:(int)dir {
+    int found = 0;
+    double m = jv_timeline_adjacent_marker(_timeline, _playhead, dir, &found);
+    if (!found) return;
+    if (_transportPlaying) [self stopTransport];
+    _playhead = m;
+    [self refreshAll];
+}
+
+// ---- Clip / track navigation ----
+// Flat list of all clips ordered by (start_time, track index).
+- (NSArray<NSValue *> *)orderedClips {
+    NSMutableArray<NSValue *> *a = [NSMutableArray array];
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) [a addObject:[NSValue valueWithPointer:&t->clips[j]]];
+    }
+    [a sortUsingComparator:^NSComparisonResult(NSValue *x, NSValue *y) {
+        jv_clip *cx = (jv_clip *)x.pointerValue, *cy = (jv_clip *)y.pointerValue;
+        if (cx->start_time < cy->start_time) return NSOrderedAscending;
+        if (cx->start_time > cy->start_time) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    return a;
+}
+
+- (void)selectClipAndSeek:(jv_clip *)c {
+    if (!c) return;
+    _selected = c;
+    if (_transportPlaying) [self stopTransport];
+    _playhead = c->start_time;
+    [self refreshAll];
+}
+
+- (void)selectAdjacentClip:(int)dir {
+    NSArray<NSValue *> *order = [self orderedClips];
+    if (order.count == 0) return;
+    NSInteger idx = -1;
+    for (NSUInteger i = 0; i < order.count; i++)
+        if ((jv_clip *)order[i].pointerValue == _selected) { idx = (NSInteger)i; break; }
+    NSInteger next = idx < 0 ? (dir > 0 ? 0 : (NSInteger)order.count - 1) : idx + dir;
+    if (next < 0) next = 0;
+    if (next >= (NSInteger)order.count) next = (NSInteger)order.count - 1;
+    [self selectClipAndSeek:(jv_clip *)order[(NSUInteger)next].pointerValue];
+}
+
+- (void)focusTrack:(int)dir {
+    if (_timeline->track_count == 0) return;
+    // Determine the current track from the selection; default to the top.
+    NSInteger cur = -1;
+    for (size_t i = 0; i < _timeline->track_count && _selected; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++)
+            if (&t->clips[j] == _selected) { cur = (NSInteger)i; break; }
+        if (cur >= 0) break;
+    }
+    NSInteger ti = (cur < 0) ? 0 : cur + dir;
+    if (ti < 0) ti = 0;
+    if (ti >= (NSInteger)_timeline->track_count) ti = (NSInteger)_timeline->track_count - 1;
+    // Select the clip on that track nearest the playhead, if any.
+    jv_track *t = &_timeline->tracks[ti];
+    jv_clip *best = NULL; double bestD = 1e18;
+    for (size_t j = 0; j < t->clip_count; j++) {
+        double d = fabs(t->clips[j].start_time - _playhead);
+        if (d < bestD) { bestD = d; best = &t->clips[j]; }
+    }
+    if (best) _selected = best; else _selected = NULL;
+    [self refreshAll];
+}
+
+- (void)beginEditingClip:(jv_clip *)c {
+    if (!c || c->type != JV_CLIP_TEXT) return;
+    _selected = c;
+    // Move the playhead into the clip so it's visible in the preview.
+    if (_playhead < c->start_time || _playhead >= c->start_time + c->duration)
+        _playhead = c->start_time + c->duration * 0.5;
+    [self refreshAll];
+    [_preview beginEditingTextClip:c];
+}
 
 // Remove a clip from whatever track holds it.
 - (void)removeClip:(jv_clip *)clip {

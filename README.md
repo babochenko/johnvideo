@@ -138,16 +138,22 @@ Clip     { type, start_time, duration, in_offset, union payload }
 
 | Key | Action |
 |---|---|
-| Space | Play / stop |
-| ← / → , h / l | Move playhead ∓ 0.5 s |
+| Space | Play / stop (playback rewinds to the start when it reaches the end) |
+| ← / → | Move the playhead ∓ 0.5 s |
+| h / l | Select previous / next clip (by start time) |
+| j / k | Move selection down / up between tracks (starts at the top) |
+| m | Add a marker at the playhead |
+| Ctrl + ← / → , Ctrl + h / l | Jump the playhead to the previous / next marker |
 | t | Add text at the playhead (enters in-place edit) |
 | Ctrl + `+` / `-` | Zoom timeline in / out |
-| Delete / Backspace | Delete selected clip |
-| Cmd/Ctrl + C | Copy selected clip |
-| Cmd/Ctrl + V | Paste clip (falls back to pasting an image from the system clipboard) |
-| Cmd/Ctrl + Z | Undo |
-| Cmd/Ctrl + Shift + Z | Redo |
+| Delete / Backspace | Delete the marker at the playhead, else the selected clip |
+| Cmd/Ctrl + C / V | Copy / paste clip (paste falls back to image from clipboard) |
+| Cmd/Ctrl + Z / Shift + Z | Undo / redo |
 | Cmd + S / Cmd + O | Save / Open project |
+
+**Markers**: yellow flags on the timeline. Add with `m` or right-click the ruler → Add Marker Here; delete with Backspace at the playhead or right-click → Delete Marker; jump with Ctrl+←/→ or Ctrl+h/l; saved in the project (`mark <t>` lines); undoable.
+
+**Editing text**: double-click a text clip on the **preview** or the **timeline** to edit it in place with a cursor.
 
 ---
 

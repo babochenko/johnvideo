@@ -327,6 +327,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 - (void)beginEditingTextClip:(jv_clip *)c {
     [self commitTextEditing];
     _editClip = c;
+    _videoRect = [self fitRect];          // ensure geometry is current (may run before first draw)
     jv_timeline *tl = [self.host timeline];
     CGFloat sc = _videoRect.size.height / (tl && tl->height > 0 ? tl->height : 1080);
 
@@ -335,6 +336,8 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     NSRect fr = NSMakeRect([self centerForClip:c].x - w / 2, [self centerForClip:c].y - h / 2, w, h);
     _editField = [[NSTextField alloc] initWithFrame:fr];
     _editField.stringValue = c->u.text.string ? @(c->u.text.string) : @"";
+    _editField.editable = YES;
+    _editField.selectable = YES;
     _editField.bordered = NO;
     _editField.drawsBackground = YES;
     _editField.backgroundColor = [NSColor colorWithWhite:0 alpha:0.4];
@@ -377,19 +380,27 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 - (void)keyDown:(NSEvent *)e {
     NSString *chars = e.charactersIgnoringModifiers;
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
+    unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
     if (m & NSEventModifierFlagControl) {
-        unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
         if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }
         if (lk == 'c') { [self.host copySelectedClip]; return; }
         if (lk == 'v') { [self paste:nil]; return; }
+        if (lk == 'h' || k == NSLeftArrowFunctionKey)  { [self.host jumpToMarker:-1]; return; }
+        if (lk == 'l' || k == NSRightArrowFunctionKey) { [self.host jumpToMarker:1];  return; }
         if (k == '=' || k == '+') { [self.host zoomBy:1.25]; return; }
         if (k == '-' || k == '_') { [self.host zoomBy:0.8];  return; }
+        return;
     }
     if (k == ' ') { [self.host transportToggle]; return; }
-    if (k == NSLeftArrowFunctionKey  || k == 'h') { [self.host nudgePlayheadBy:-0.5]; return; }
-    if (k == NSRightArrowFunctionKey || k == 'l') { [self.host nudgePlayheadBy:0.5];  return; }
-    if (k == 't') { [self.host addTextAtPlayhead]; return; }
+    if (k == NSLeftArrowFunctionKey)  { [self.host nudgePlayheadBy:-0.5]; return; }
+    if (k == NSRightArrowFunctionKey) { [self.host nudgePlayheadBy:0.5];  return; }
+    if (lk == 'h') { [self.host selectAdjacentClip:-1]; return; }
+    if (lk == 'l') { [self.host selectAdjacentClip:1];  return; }
+    if (lk == 'j') { [self.host focusTrack:1];  return; }
+    if (lk == 'k') { [self.host focusTrack:-1]; return; }
+    if (lk == 't') { [self.host addTextAtPlayhead]; return; }
+    if (lk == 'm') { [self.host addMarkerAtPlayhead]; return; }
     [super keyDown:e];
 }
 

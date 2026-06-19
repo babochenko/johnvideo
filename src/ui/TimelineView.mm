@@ -197,6 +197,20 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         }
     }
 
+    // Markers (yellow lines + a flag in the ruler).
+    for (size_t i = 0; i < tl->marker_count; i++) {
+        CGFloat mx = [self xForTime:tl->markers[i]];
+        if (mx < kHeaderWidth) continue;
+        [[NSColor systemYellowColor] setFill];
+        NSRectFill(NSMakeRect(mx, 0, 1, self.bounds.size.height));
+        NSBezierPath *flag = [NSBezierPath bezierPath];
+        [flag moveToPoint:NSMakePoint(mx, 0)];
+        [flag lineToPoint:NSMakePoint(mx + 8, 5)];
+        [flag lineToPoint:NSMakePoint(mx, 10)];
+        [flag closePath];
+        [flag fill];
+    }
+
     // Playhead.
     CGFloat px = [self xForTime:[self.host playhead]];
     [[NSColor systemRedColor] setFill];
@@ -207,6 +221,13 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 - (void)mouseDown:(NSEvent *)e {
     [self.window makeFirstResponder:self];
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+
+    // Double-click a text clip on the timeline -> edit it in place on the preview.
+    if (e.clickCount == 2) {
+        jv_track *t = NULL; size_t idx = 0;
+        jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
+        if (c && c->type == JV_CLIP_TEXT) { [self.host selectTrack:t clip:c]; [self.host beginEditingClip:c]; return; }
+    }
 
     if (p.y < kRulerHeight) { _drag = DRAG_SCRUB; [self.host seekTo:[self snapTime:[self timeForX:p.x]]]; return; }
 
@@ -353,6 +374,17 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     NSMenu *menu = [[NSMenu alloc] init];
 
+    // Ruler: marker add/delete.
+    if (p.y < kRulerHeight) {
+        NSNumber *t = @([self timeForX:p.x]);
+        NSMenuItem *add = [menu addItemWithTitle:@"Add Marker Here" action:@selector(addMarkerHere:) keyEquivalent:@""];
+        add.target = self; add.representedObject = t;
+        NSMenuItem *del = [menu addItemWithTitle:@"Delete Marker" action:@selector(deleteMarkerHere:) keyEquivalent:@""];
+        del.target = self; del.representedObject = t;
+        [NSMenu popUpContextMenu:menu withEvent:e forView:self];
+        return;
+    }
+
     // Track header: track-management menu.
     if (p.x < kHeaderWidth) {
         size_t ti = [self trackIndexForY:p.y];
@@ -402,45 +434,48 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     [self.host addTextAtCanvasX:0.5f y:0.5f time:[self timeForX:p.x]];
 }
 
+- (void)addMarkerHere:(NSMenuItem *)item {
+    [self.host seekTo:[[item representedObject] doubleValue]];
+    [self.host addMarkerAtPlayhead];
+}
+- (void)deleteMarkerHere:(NSMenuItem *)item {
+    [self.host seekTo:[[item representedObject] doubleValue]];
+    [self.host deleteMarkerNearPlayhead];
+}
+
 - (void)keyDown:(NSEvent *)e {
     NSString *chars = e.charactersIgnoringModifiers;
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
+    unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
     if (m & NSEventModifierFlagControl) {            // Ctrl-based shortcuts
-        unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
         if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }
         if (lk == 'c') { [self.host copySelectedClip]; return; }
         if (lk == 'v') { [self paste:nil]; return; }
+        if (lk == 'h' || k == NSLeftArrowFunctionKey)  { [self.host jumpToMarker:-1]; return; }
+        if (lk == 'l' || k == NSRightArrowFunctionKey) { [self.host jumpToMarker:1];  return; }
         if (k == '=' || k == '+') { [self.host zoomBy:1.25]; [self setNeedsDisplay:YES]; return; }
         if (k == '-' || k == '_') { [self.host zoomBy:0.8];  [self setNeedsDisplay:YES]; return; }
+        return;
     }
     if (k == ' ') { [self.host transportToggle]; return; }
-    if (k == NSLeftArrowFunctionKey  || k == 'h') { [self.host nudgePlayheadBy:-0.5]; return; }
-    if (k == NSRightArrowFunctionKey || k == 'l') { [self.host nudgePlayheadBy:0.5];  return; }
-    if (k == 't') { [self.host addTextAtPlayhead]; return; }
-    if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) { [self deleteSelected]; return; }
+    if (k == NSLeftArrowFunctionKey)  { [self.host nudgePlayheadBy:-0.5]; return; }   // arrows move time
+    if (k == NSRightArrowFunctionKey) { [self.host nudgePlayheadBy:0.5];  return; }
+    if (lk == 'h') { [self.host selectAdjacentClip:-1]; return; }   // h/l move between objects
+    if (lk == 'l') { [self.host selectAdjacentClip:1];  return; }
+    if (lk == 'j') { [self.host focusTrack:1];  return; }            // j/k jump tracks (j down, k up)
+    if (lk == 'k') { [self.host focusTrack:-1]; return; }
+    if (lk == 't') { [self.host addTextAtPlayhead]; return; }
+    if (lk == 'm') { [self.host addMarkerAtPlayhead]; return; }
+    if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) {
+        if ([self.host deleteMarkerNearPlayhead]) return;   // a marker at the playhead, else the clip
+        [self.host deleteSelectedClip];
+        return;
+    }
     [super keyDown:e];
 }
 
-- (void)deleteSelected {
-    jv_clip *sel = [self.host selectedClip];
-    if (!sel) return;
-    [self.host recordUndo];
-    jv_timeline *tl = [self.host timeline];
-    for (size_t i = 0; i < tl->track_count; i++) {
-        jv_track *t = &tl->tracks[i];
-        for (size_t j = 0; j < t->clip_count; j++) {
-            if (&t->clips[j] == sel) {
-                jv_clip_free_payload(&t->clips[j]);
-                memmove(&t->clips[j], &t->clips[j + 1], (t->clip_count - j - 1) * sizeof(jv_clip));
-                t->clip_count--;
-                [self.host selectTrack:NULL clip:NULL];
-                [self.host refreshAll];
-                return;
-            }
-        }
-    }
-}
+- (void)deleteSelected { [self.host deleteSelectedClip]; }
 
 // ---- Paste (Cmd+V via the Edit menu) ----
 - (void)paste:(id)sender {

@@ -45,6 +45,19 @@ static const CGFloat kRulerHeight = 18.0;
 - (void)recordUndo;                       // snapshot before a mutation
 - (void)copySelectedClip;
 - (BOOL)pasteClipAtPlayhead;              // YES if a clip was pasted
+- (void)deleteSelectedClip;
 - (void)performUndo;
 - (void)performRedo;
+
+// Markers.
+- (void)addMarkerAtPlayhead;              // m
+- (BOOL)deleteMarkerNearPlayhead;         // YES if one was removed
+- (void)jumpToMarker:(int)dir;            // ctrl + arrows / h / l
+
+// Clip / track navigation (vim-style).
+- (void)selectAdjacentClip:(int)dir;      // h / l  (by start time)
+- (void)focusTrack:(int)dir;              // j / k
+
+// Edit a text clip in place on the preview (timeline double-click).
+- (void)beginEditingClip:(jv_clip *)c;
 @end

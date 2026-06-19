@@ -83,10 +83,10 @@ unsigned char *jv_rasterize_text(const char *utf8, double font_size,
     CGColorSpaceRelease(cspace);
     if (!ctx) { free(buf); return NULL; }
 
-    // Draw via a flipped (top-left origin) context so the bitmap is top-down,
-    // matching the image path (jv_rgba_from_file) and the engine convention.
+    // Draw in the same bottom-left-origin CG context the image path uses (no
+    // extra flip) so the text bitmap has the identical top-down layout.
     NSGraphicsContext *prev = [NSGraphicsContext currentContext];
-    NSGraphicsContext *gc = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:YES];
+    NSGraphicsContext *gc = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
     [NSGraphicsContext setCurrentContext:gc];
     [as drawAtPoint:NSMakePoint(4, 3)];
     [gc flushGraphics];

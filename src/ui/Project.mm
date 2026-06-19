@@ -72,6 +72,7 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
     if (!f) return NO;
     fprintf(f, "johnvideo 1\n");
     fprintf(f, "canvas %d %d %.4f\n", tl->width, tl->height, tl->fps);
+    for (size_t i = 0; i < tl->marker_count; i++) fprintf(f, "mark %.4f\n", tl->markers[i]);
 
     int asset = 0;
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -184,6 +185,8 @@ jv_timeline *jv_project_load(NSString *path) {
             if (sscanf(s, "canvas %d %d %lf", &w, &h, &fps) == 3) {
                 tl->width = w; tl->height = h; tl->fps = fps;
             }
+        } else if (strncmp(s, "mark ", 5) == 0) {
+            jv_timeline_add_marker(tl, atof(s + 5));
         } else if (strncmp(s, "track ", 6) == 0) {
             char kind = s[6];
             const char *name = s + 8;            // "track X <name>"

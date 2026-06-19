@@ -95,7 +95,13 @@
     { "id": 55, "area": "keys", "request": "Cmd/Ctrl+Shift+Z redo", "status": "done" },
     { "id": 56, "area": "keys", "request": "Ctrl + '+'/'-' zoom the timeline", "status": "done" },
     { "id": 57, "area": "keys", "request": "'t' adds text at the current position", "status": "done" },
-    { "id": 58, "area": "project", "request": "Hierarchical project file: 2-space indented sublines, blank line after each track (neither required for parsing)", "status": "done" }
+    { "id": 58, "area": "project", "request": "Hierarchical project file: 2-space indented sublines, blank line after each track (neither required for parsing)", "status": "done" },
+    { "id": 59, "area": "project", "request": "Make clip lines readable with labeled key=value fields", "status": "done", "note": "Parsed order-independently." },
+    { "id": 60, "area": "text", "request": "Text still rendered upside down when added", "status": "done", "note": "Rasterizer now draws in a non-flipped CG context matching the image path." },
+    { "id": 61, "area": "text", "request": "Edit text via double-click on the timeline or on the preview", "status": "done", "note": "beginEditingClip recomputes geometry; field forced editable." },
+    { "id": 62, "area": "playback", "request": "When playback finishes, return to the beginning", "status": "done" },
+    { "id": 63, "area": "markers", "request": "Timeline marks: add, delete (right-click / backspace), undoable, stored in project, jump with ctrl+arrows / ctrl+h/l", "status": "done" },
+    { "id": 64, "area": "keys", "request": "Pivot: j/k jump between tracks (top if no focus); h/l move between objects by start (collisions by track); arrows move current time", "status": "done" }
   ],
   "needs_on_device_verification": [
     "Recorded voiceover audible during in-app Play (export path proven; live engine output hardened but unverified headlessly)",

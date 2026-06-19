@@ -98,6 +98,9 @@ typedef struct jv_timeline {
     size_t    track_count;
     size_t    track_cap;
     double    playhead;      // seconds
+    double   *markers;       // sorted marker times (seconds)
+    size_t    marker_count;
+    size_t    marker_cap;
 } jv_timeline;
 
 // ---- Lifecycle ------------------------------------------------------------
@@ -131,6 +134,14 @@ jv_clip *jv_track_add_clip(jv_track *t, jv_clip_type type,
 void jv_clip_free_payload(jv_clip *c);
 
 double jv_timeline_duration(const jv_timeline *tl);
+
+// ---- Markers --------------------------------------------------------------
+void   jv_timeline_add_marker(jv_timeline *tl, double t);
+// Remove the marker nearest t within tolerance (seconds); returns 1 if removed.
+int    jv_timeline_remove_marker_near(jv_timeline *tl, double t, double tol);
+// Nearest marker strictly in `dir` (-1 before / +1 after) from t.
+// Returns its time and sets *found; if none, returns t and *found = 0.
+double jv_timeline_adjacent_marker(const jv_timeline *tl, double t, int dir, int *found);
 
 // ---- Compositor (shared by preview + export) ------------------------------
 // Renders every visual track (track order = back-to-front z-order) at time t
