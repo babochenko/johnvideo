@@ -20,6 +20,14 @@ int main(void) {
                     keyEquivalent:@"q"];
         [appItem setSubmenu:appMenu];
 
+        // File menu: Open / Save project (routes to AppDelegate via the chain).
+        NSMenuItem *fileItem = [[NSMenuItem alloc] init];
+        [menubar addItem:fileItem];
+        NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+        [fileMenu addItemWithTitle:@"Open Project…" action:@selector(openProject:) keyEquivalent:@"o"];
+        [fileMenu addItemWithTitle:@"Save Project…" action:@selector(saveProject:) keyEquivalent:@"s"];
+        [fileItem setSubmenu:fileMenu];
+
         // Edit menu so Cmd+V routes paste: down the responder chain to the
         // focused view (preview or timeline).
         NSMenuItem *editItem = [[NSMenuItem alloc] init];

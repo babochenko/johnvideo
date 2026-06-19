@@ -32,7 +32,8 @@ LDFLAGS   := $(FFMPEG_LDFLAGS) \
 
 C_SRCS    := src/engine/timeline.c src/engine/decoder.c src/engine/export.c
 MM_SRCS   := src/ui/main.mm src/ui/AppDelegate.mm src/ui/PreviewView.mm \
-             src/ui/TimelineView.mm src/ui/Media.mm src/ui/AudioController.mm
+             src/ui/TimelineView.mm src/ui/Media.mm src/ui/AudioController.mm \
+             src/ui/Project.mm
 
 C_OBJS    := $(patsubst src/%.c,$(BUILD_DIR)/obj/%.o,$(C_SRCS))
 MM_OBJS   := $(patsubst src/%.mm,$(BUILD_DIR)/obj/%.o,$(MM_SRCS))

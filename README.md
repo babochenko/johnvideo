@@ -53,6 +53,31 @@ Everything the user has explicitly asked for, with status. ✅ done · 🔲 outs
 - ✅ Bilinear compositing + canvas adopts the first imported video's native resolution
 - ✅ Export at source quality (lossless H.264, CRF 0)
 
+**Text**
+- ✅ Insert text immediately (no popup); edit in place on the preview with a cursor
+- ✅ Double-click a text clip (or empty canvas) to edit; edits reflect live in the timeline clip
+
+**Trimming & snapping**
+- ✅ Drag either clip edge to trim (left edge trims into the source); both sticky
+- ✅ Regular clip moves snap to playhead and neighbouring clip edges
+- ✅ Canvas moves snap to canvas edges/center; rotation snaps to 90°
+
+**Tracks**
+- ✅ Reorder tracks by dragging the track header vertically
+- ✅ Video tracks always kept above audio tracks
+- ✅ Top visual track has the highest z-order (drawn on top)
+- ✅ Horizontal scroll pans the timeline; vertical scroll moves through the track list
+- ✅ Delete-track confirmation warning that media disappears
+
+**Project files**
+- ✅ Save/Open a project as a git-trackable text `.jvp` (File menu, Cmd+S / Cmd+O)
+- ✅ Path-less media (pasted images, recordings) saved to a `<file>.assets/` sidecar
+- ✅ `.gitignore` for build output and generated artifacts
+
+**UI polish**
+- ✅ Floating toolbar of separate rounded Liquid Glass capsule buttons (not merged)
+- ✅ Opaque dark window background (no stray light edges)
+
 ## Architecture
 
 The most important constraint: **"native macOS" UI means AppKit, which is Objective-C — pure C cannot drive it.** So the app is split:

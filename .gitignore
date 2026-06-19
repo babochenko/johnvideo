@@ -1,0 +1,27 @@
+# Build output
+/build/
+
+# macOS cruft
+.DS_Store
+*.swp
+*~
+
+# Xcode / editor metadata (not used by the Makefile build, but just in case)
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.idea/
+.vscode/
+
+# Compiled objects / binaries
+*.o
+*.a
+*.dylib
+*.app/
+
+# Exported media & project test artifacts
+*.mp4
+/build/test_out.mp4
+
+# Project assets folders generated next to .jvp files
+*.assets/

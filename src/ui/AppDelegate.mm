@@ -11,6 +11,7 @@
 #include "timeline.h"
 #include "decoder.h"
 #include "export.h"
+#import "Project.h"
 
 static const double kImageDuration = 4.0;
 static const double kTextDuration  = 3.0;
@@ -26,6 +27,11 @@ static const CGFloat kTimelineHeight = 240.0;
 @end
 
 @implementation RootView
+- (BOOL)isOpaque { return YES; }
+- (void)drawRect:(NSRect)r {
+    [[NSColor colorWithCalibratedWhite:0.10 alpha:1.0] setFill];
+    NSRectFill(r);
+}
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; [self setNeedsLayout:YES]; }
 - (void)layout {
     [super layout];
@@ -84,50 +90,49 @@ static const CGFloat kTimelineHeight = 240.0;
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered defer:NO];
     [_window setTitle:@"johnvideo"];
+    _window.backgroundColor = [NSColor blackColor];
     _window.titlebarAppearsTransparent = YES;
     _window.titleVisibility = NSWindowTitleHidden;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     [_window center];
 
-    // Compact row of rounded buttons inside a small floating glass pill.
-    const CGFloat bh = 28, gap = 6, padEnds = 10;
+    // A row of separate, floating buttons. Each is its own rounded Liquid Glass
+    // capsule (NOT merged in a container, so they stay distinct ovals).
+    const CGFloat bh = 30, gap = 10, vpad = 6;
     NSView *inner = [[NSView alloc] init];
-    NSButton *(^mk)(NSString *, SEL, CGFloat *) = ^NSButton *(NSString *title, SEL sel, CGFloat *x) {
+    __block CGFloat x = 0;
+    NSButton *(^mk)(NSString *, SEL) = ^NSButton *(NSString *title, SEL sel) {
         NSButton *b = [NSButton buttonWithTitle:title target:self action:sel];
-        b.bezelStyle = NSBezelStyleRounded;
+        b.bordered = NO;
+        b.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
         [b sizeToFit];
-        NSRect f = b.frame; f.origin = NSMakePoint(*x, 6); f.size.height = bh;
-        b.frame = f;
-        *x += f.size.width + gap;
-        [inner addSubview:b];
+        CGFloat bw = b.frame.size.width + 28;
+        b.frame = NSMakeRect(0, 0, bw, bh);
+        b.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        NSView *cap;
+        if (@available(macOS 26.0, *)) {
+            NSGlassEffectView *g = [[NSGlassEffectView alloc] initWithFrame:NSMakeRect(x, vpad, bw, bh)];
+            g.cornerRadius = bh / 2;
+            g.contentView = b;
+            cap = g;
+        } else {
+            b.bordered = YES; b.bezelStyle = NSBezelStyleRounded;
+            b.frame = NSMakeRect(x, vpad, bw, bh);
+            cap = b;
+        }
+        [inner addSubview:cap];
+        x += bw + gap;
         return b;
     };
-    CGFloat x = padEnds;
-    _playButton = mk(@"Play", @selector(togglePlay), &x);
-    _recButton  = mk(@"● Rec", @selector(toggleRecord), &x);
-    mk(@"Import…", @selector(importMedia), &x);
-    mk(@"Export…", @selector(exportMovie), &x);
+    _playButton = mk(@"Play", @selector(togglePlay));
+    _recButton  = mk(@"● Rec", @selector(toggleRecord));
+    mk(@"Import…", @selector(importMedia));
+    mk(@"Export…", @selector(exportMovie));
 
-    NSSize barSize = NSMakeSize(x - gap + padEnds, bh + 12);
+    NSSize barSize = NSMakeSize(x - gap, bh + vpad * 2);
     inner.frame = NSMakeRect(0, 0, barSize.width, barSize.height);
     inner.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-
-    NSView *bar;
-    if (@available(macOS 26.0, *)) {
-        NSGlassEffectView *glass = [[NSGlassEffectView alloc] initWithFrame:inner.frame];
-        glass.cornerRadius = barSize.height / 2;
-        glass.contentView = inner;
-        bar = glass;
-    } else {
-        NSVisualEffectView *vev = [[NSVisualEffectView alloc] initWithFrame:inner.frame];
-        vev.material = NSVisualEffectMaterialHUDWindow;
-        vev.state = NSVisualEffectStateActive;
-        vev.wantsLayer = YES;
-        vev.layer.cornerRadius = barSize.height / 2;
-        vev.layer.masksToBounds = YES;
-        [vev addSubview:inner];
-        bar = vev;
-    }
+    NSView *bar = inner;   // transparent container; capsules float over content
 
     _preview = [[PreviewView alloc] initWithFrame:NSZeroRect];
     _preview.host = self;
@@ -426,6 +431,31 @@ static const CGFloat kTimelineHeight = 240.0;
     panel.allowsMultipleSelection = NO;
     if ([panel runModal] == NSModalResponseOK && panel.URL)
         [self importMediaPath:panel.URL.path atTime:_playhead];
+}
+
+// ---- Project save / open (text .jvp) ----
+- (void)saveProject:(id)sender {
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = @"project.jvp";
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
+    if (!jv_project_save(_timeline, panel.URL.path))
+        [self alert:@"Save failed" info:panel.URL.path];
+}
+
+- (void)openProject:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.allowedFileTypes = @[ @"jvp" ];
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
+    jv_timeline *loaded = jv_project_load(panel.URL.path);
+    if (!loaded) { [self alert:@"Open failed" info:panel.URL.path]; return; }
+    [self stopTransport];
+    _selected = NULL;
+    jv_timeline *old = _timeline;
+    _timeline = loaded;
+    _audio.timeline = _timeline;
+    jv_timeline_destroy(old);
+    _playhead = 0;
+    [self refreshAll];
 }
 
 - (void)exportMovie {
