@@ -126,6 +126,11 @@ void jv_timeline_order_tracks(jv_timeline *tl);
 // Returns the clip's new location in dst, or NULL on failure.
 jv_clip *jv_clip_move_to_track(jv_track *src, size_t ci, jv_track *dst);
 
+// Split the clip at index `ci` at absolute time `atTime` into two clips (the
+// payload is deep-copied; the second half's in_offset advances). Returns the
+// new second clip, or NULL if atTime is outside the clip.
+jv_clip *jv_track_split_clip(jv_track *t, size_t ci, double atTime);
+
 // Append a zeroed clip of the given type to a track; returns a borrowed pointer.
 jv_clip *jv_track_add_clip(jv_track *t, jv_clip_type type,
                            double start_time, double duration);

@@ -68,4 +68,9 @@ static const CGFloat kRulerHeight = 18.0;
 
 // Edit a text clip in place on the preview (timeline double-click).
 - (void)beginEditingClip:(jv_clip *)c;
+
+// Blade tool (modal): toggle, query, and cut a clip at the playhead.
+- (void)toggleBlade;
+- (BOOL)bladeActive;
+- (void)bladeCutClip:(jv_clip *)c;
 @end

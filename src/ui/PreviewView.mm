@@ -188,6 +188,8 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 - (void)mouseDown:(NSEvent *)e {
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
 
+    if (_editing) [self commitTextEditing];   // clicking elsewhere commits the edit
+
     // Double-click: edit a text clip in place, or create one and edit it.
     if (e.clickCount == 2) {
         jv_clip *hit = [self visualClipAtPoint:p];
@@ -372,10 +374,19 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 // Handle a key while editing; returns YES if consumed.
 - (BOOL)handleEditingKey:(NSEvent *)e {
     if (!_editing) return NO;
+    NSEventModifierFlags m = e.modifierFlags;
     NSString *ig = e.charactersIgnoringModifiers;
     unichar k = ig.length ? [ig characterAtIndex:0] : 0;
-    if (k == 0x0D || k == 0x03 || k == 0x1B) { [self commitTextEditing]; return YES; }   // return / enter / esc
-    if (k == NSDeleteCharacter || k == 0x08) {                                            // backspace
+    unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
+
+    if ((m & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) && lk == 'v') {   // paste text
+        NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+        if (clip.length) { [_editText appendString:clip]; [self applyEditedText]; }
+        return YES;
+    }
+    if (k == 0x1B) { [self commitTextEditing]; return YES; }                 // esc commits
+    if (k == 0x0D || k == 0x03) { [_editText appendString:@"\n"]; [self applyEditedText]; return YES; }  // return = newline (multiline)
+    if (k == NSDeleteCharacter || k == 0x08) {                              // backspace
         if (_editText.length) [_editText deleteCharactersInRange:NSMakeRange(_editText.length - 1, 1)];
         [self applyEditedText];
         return YES;
@@ -430,6 +441,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     if (lk == 'k') { [self.host focusTrack:-1]; return; }
     if (lk == 't') { [self.host addTextAtPlayhead]; return; }
     if (lk == 'm') { [self.host addMarkerAtPlayhead]; return; }
+    if (lk == 'b') { [self.host toggleBlade]; return; }
     if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) {
         [self.host deleteSelectedClip]; return;   // backspace deletes the selected object
     }

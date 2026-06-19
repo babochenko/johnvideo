@@ -25,6 +25,8 @@ int main(void) {
         [menubar addItem:fileItem];
         NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
         [fileMenu addItemWithTitle:@"Open Project…" action:@selector(openProject:) keyEquivalent:@"o"];
+        NSMenuItem *reveal = [fileMenu addItemWithTitle:@"Reveal Project in Finder" action:@selector(revealProject:) keyEquivalent:@"o"];
+        reveal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
         [fileMenu addItemWithTitle:@"Save Project…" action:@selector(saveProject:) keyEquivalent:@"s"];
         [fileItem setSubmenu:fileMenu];
 

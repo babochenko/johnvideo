@@ -152,6 +152,47 @@ jv_clip *jv_clip_move_to_track(jv_track *src, size_t ci, jv_track *dst) {
     return slot;
 }
 
+// Deep-copy a clip's owned payload buffers into dst (dst already holds a shallow
+// copy). Video decoders are not shared (reopened lazily).
+static void copy_clip_payload(jv_clip *dst, const jv_clip *src) {
+    switch (src->type) {
+        case JV_CLIP_IMAGE:
+            dst->u.image.path = src->u.image.path ? jv_strdup(src->u.image.path) : NULL;
+            dst->u.image.rgba = dup_mem(src->u.image.rgba, (size_t)src->u.image.width * src->u.image.height * 4);
+            break;
+        case JV_CLIP_TEXT:
+            dst->u.text.string = src->u.text.string ? jv_strdup(src->u.text.string) : NULL;
+            dst->u.text.rgba = dup_mem(src->u.text.rgba, (size_t)src->u.text.width * src->u.text.height * 4);
+            break;
+        case JV_CLIP_VIDEO:
+            dst->u.video.path = src->u.video.path ? jv_strdup(src->u.video.path) : NULL;
+            dst->u.video.decoder = NULL;
+            break;
+        case JV_CLIP_AUDIO:
+            dst->u.audio.path = src->u.audio.path ? jv_strdup(src->u.audio.path) : NULL;
+            dst->u.audio.pcm = (float *)dup_mem(src->u.audio.pcm, src->u.audio.frames * 2 * sizeof(float));
+            break;
+    }
+}
+
+jv_clip *jv_track_split_clip(jv_track *t, size_t ci, double atTime) {
+    if (!t || ci >= t->clip_count) return NULL;
+    jv_clip orig = t->clips[ci];   // by value — surviving a possible realloc below
+    double end = orig.start_time + orig.duration;
+    if (atTime <= orig.start_time + 1e-4 || atTime >= end - 1e-4) return NULL;
+
+    jv_clip *second = jv_track_add_clip(t, orig.type, atTime, end - atTime);
+    if (!second) return NULL;
+    *second = orig;                         // shallow copy scalars + payload pointers
+    copy_clip_payload(second, &orig);       // then deep-copy the owned buffers
+    second->start_time = atTime;
+    second->duration = end - atTime;
+    second->in_offset = orig.in_offset + (atTime - orig.start_time);
+
+    t->clips[ci].duration = atTime - orig.start_time;   // shrink the first half
+    return second;
+}
+
 void jv_timeline_move_track(jv_timeline *tl, size_t from, size_t to) {
     if (!tl || from >= tl->track_count || to >= tl->track_count || from == to) return;
     jv_track tmp = tl->tracks[from];

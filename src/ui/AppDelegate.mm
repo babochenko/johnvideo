@@ -84,6 +84,8 @@ static const CGFloat kTimelineHeight = 240.0;
     NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
     NSMutableArray<NSValue *> *_selection; // all selected clips (primary = _selected)
     NSString          *_projectPath;     // current .jvp path (Cmd+S saves here without asking)
+    BOOL               _bladeMode;       // modal blade tool
+    NSButton          *_bladeButton;
 }
 
 // ---- Setup ----
@@ -143,6 +145,7 @@ static const CGFloat kTimelineHeight = 240.0;
         x += bw + gap;
         return b;
     };
+    _bladeButton = mk(@"Blade", @selector(toggleBladeAction));   // leftmost; fixed slot
     _playButton = mk(@"▶", @selector(togglePlay));
     _recButton  = mk(@"● Rec", @selector(toggleRecord));
     mk(@"Import…", @selector(importMedia));
@@ -301,8 +304,8 @@ static const CGFloat kTimelineHeight = 240.0;
         else if (dir < 0 && s < _playhead - eps) { if (!got || s > best) { best = s; got = 1; } }
     }
     if (!got) return;
-    if (_transportPlaying) [self stopTransport];
     _playhead = best;
+    if (_transportPlaying) { [self startClockFrom:best]; [_audio playFrom:best]; }   // keep playing
     [self refreshAll];
 }
 
@@ -492,31 +495,42 @@ static const CGFloat kTimelineHeight = 240.0;
     [a runModal];
 }
 
-// Bottom-right transient toast. If url is given the toast is clickable and
-// opens that file; it fades out after a few seconds.
-- (void)showToast:(NSString *)msg fileURL:(NSURL *)url {
+// Create a bottom-right toast (no auto-dismiss); caller manages its lifetime.
+- (ToastButton *)makeToast:(NSString *)msg {
     NSView *content = _window.contentView;
     ToastButton *toast = [ToastButton buttonWithTitle:msg target:self action:@selector(toastClicked:)];
-    toast.fileURL = url;
     toast.bezelStyle = NSBezelStyleRounded;
     toast.bordered = NO;
     toast.wantsLayer = YES;
     toast.layer.backgroundColor = [NSColor colorWithWhite:0 alpha:0.78].CGColor;
     toast.layer.cornerRadius = 8;
     toast.contentTintColor = [NSColor whiteColor];
+    toast.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    [self sizeToast:toast];
+    [content addSubview:toast];
+    return toast;
+}
+
+- (void)sizeToast:(ToastButton *)toast {
     [toast sizeToFit];
     NSSize sz = NSMakeSize(toast.frame.size.width + 28, 30);
-    toast.frame = NSMakeRect(content.bounds.size.width - sz.width - 16, 16, sz.width, sz.height);
-    toast.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
-    [content addSubview:toast];
+    toast.frame = NSMakeRect(_window.contentView.bounds.size.width - sz.width - 16, 16, sz.width, sz.height);
+}
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+- (void)fadeToast:(ToastButton *)toast after:(double)secs {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(secs * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-            ctx.duration = 0.4;
-            toast.animator.alphaValue = 0;
+            ctx.duration = 0.4; toast.animator.alphaValue = 0;
         } completionHandler:^{ [toast removeFromSuperview]; }];
     });
+}
+
+// Transient toast that fades after a few seconds.
+- (void)showToast:(NSString *)msg fileURL:(NSURL *)url {
+    ToastButton *toast = [self makeToast:msg];
+    toast.fileURL = url;
+    [self fadeToast:toast after:4.0];
 }
 
 - (void)toastClicked:(ToastButton *)sender {
@@ -783,6 +797,40 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     [self focusOnTrack:ti];
 }
 
+// ---- Blade tool ----
+- (BOOL)bladeActive { return _bladeMode; }
+
+- (void)toggleBlade {
+    _bladeMode = !_bladeMode;
+    _bladeButton.contentTintColor = _bladeMode ? [NSColor systemOrangeColor] : nil;
+    _bladeButton.bordered = _bladeMode;   // subtle emphasis when armed
+    [self refreshAll];
+}
+- (void)toggleBladeAction { [self toggleBlade]; }
+
+- (void)bladeCutClip:(jv_clip *)c {
+    if (!c) return;
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) {
+            if (&t->clips[j] == c) {
+                if (_playhead <= c->start_time || _playhead >= c->start_time + c->duration) return;
+                [self recordUndo];
+                jv_clip *second = jv_track_split_clip(t, j, _playhead);
+                if (second) [self selectTrack:t clip:second];
+                [self refreshAll];
+                return;
+            }
+        }
+    }
+}
+
+// ---- Reveal current project in Finder (Cmd+Shift+O) ----
+- (void)revealProject:(id)sender {
+    if (_projectPath && [[NSFileManager defaultManager] fileExistsAtPath:_projectPath])
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:_projectPath] ]];
+}
+
 - (void)beginEditingClip:(jv_clip *)c {
     if (!c || c->type != JV_CLIP_TEXT) return;
     _selected = c;
@@ -859,28 +907,30 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     panel.nameFieldStringValue = @"export.mp4";
     if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
     NSString *out = panel.URL.path;
-
     [self stopTransport];
 
-    NSProgressIndicator *spin = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 200, 20)];
-    spin.indeterminate = NO; spin.minValue = 0; spin.maxValue = 1;
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Exporting…";
-    alert.accessoryView = spin;
-    // Show non-modally while the background thread runs.
-    NSWindow *sheet = _window;
-    [alert beginSheetModalForWindow:sheet completionHandler:nil];
+    // Non-blocking toast with a live elapsed timer (no modal sheet).
+    ToastButton *toast = [self makeToast:@"Exporting… 0.0s"];
+    double start = NSProcessInfo.processInfo.systemUptime;
+    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *_) {
+        toast.title = [NSString stringWithFormat:@"Exporting… %.1fs",
+                       NSProcessInfo.processInfo.systemUptime - start];
+        [self sizeToast:toast];
+    }];
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         int rc = jv_export_mp4(self->_timeline, out.UTF8String, NULL, NULL);
         dispatch_async(dispatch_get_main_queue(), ^{
-            [sheet endSheet:alert.window];
+            [timer invalidate];
+            double secs = NSProcessInfo.processInfo.systemUptime - start;
             if (rc == 0) {
-                [self showToast:[NSString stringWithFormat:@"Exported %@ — click to view", out.lastPathComponent]
-                        fileURL:[NSURL fileURLWithPath:out]];
+                toast.title = [NSString stringWithFormat:@"Exported %@ in %.1fs — click to view", out.lastPathComponent, secs];
+                toast.fileURL = [NSURL fileURLWithPath:out];
             } else {
-                [self alert:@"Export failed" info:[NSString stringWithFormat:@"error %d", rc]];
+                toast.title = [NSString stringWithFormat:@"Export failed (error %d)", rc];
             }
+            [self sizeToast:toast];
+            [self fadeToast:toast after:8.0];
         });
     });
 }

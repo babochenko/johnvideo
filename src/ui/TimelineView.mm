@@ -47,7 +47,9 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     if (p.y >= kRulerHeight && p.x >= kHeaderWidth) {
         jv_track *t = NULL; size_t idx = 0;
         jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
-        if (c) {
+        if (c && [self.host bladeActive]) {
+            cur = [NSCursor crosshairCursor];   // blade: slice
+        } else if (c) {
             NSRect r = [self rectForClip:c onTrack:idx];
             if (p.x > NSMaxX(r) - 8 || p.x < NSMinX(r) + 8) cur = [NSCursor resizeLeftRightCursor];
         }
@@ -277,6 +279,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 
     jv_track *t = NULL; size_t idx = 0;
     jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
+    if (c && [self.host bladeActive]) { [self.host bladeCutClip:c]; _drag = DRAG_NONE; return; }   // blade: slice at playhead
     if (c) {
         if (e.modifierFlags & NSEventModifierFlagCommand) { [self.host toggleSelectClip:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];
@@ -533,6 +536,7 @@ static int cmp_double(const void *a, const void *b) {
     if (lk == 'k') { [self.host focusTrack:-1]; return; }
     if (lk == 't') { [self.host addTextAtPlayhead]; return; }
     if (lk == 'm') { [self.host addMarkerAtPlayhead]; return; }
+    if (lk == 'b') { [self.host toggleBlade]; return; }
     if (k == NSDeleteCharacter || k == NSBackspaceCharacter || k == NSDeleteFunctionKey) {
         if ([self.host deleteMarkerNearPlayhead]) return;   // a marker at the playhead, else the clip
         [self.host deleteSelectedClip];

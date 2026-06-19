@@ -66,12 +66,16 @@ unsigned char *jv_rasterize_text(const char *utf8, double font_size,
         NSForegroundColorAttributeName:
             [NSColor colorWithSRGBRed:r green:g blue:b alpha:a],
     };
-    NSAttributedString *as = [[NSAttributedString alloc] initWithString:s attributes:attrs];
 
-    // Measure, with a little padding so glyphs aren't clipped.
-    NSSize sz = [as size];
-    int width = (int)ceil(sz.width) + 8;
-    int height = (int)ceil(sz.height) + 6;
+    // Multiline: lay out each line by hand (drawing a single line is the case
+    // we know renders upright), stacking so line 0 is at the top of the bitmap.
+    NSArray<NSString *> *lines = [s componentsSeparatedByString:@"\n"];
+    CGFloat lineH = [@"Ag" sizeWithAttributes:attrs].height;
+    CGFloat maxW = 1;
+    for (NSString *ln in lines) { CGFloat lw = [ln sizeWithAttributes:attrs].width; if (lw > maxW) maxW = lw; }
+    int n = (int)lines.count;
+    int width = (int)ceil(maxW) + 8;
+    int height = (int)ceil(lineH * n) + 6;
     if (width <= 0 || height <= 0) return NULL;
 
     unsigned char *buf = (unsigned char *)calloc((size_t)width * height * 4, 1);
@@ -83,12 +87,14 @@ unsigned char *jv_rasterize_text(const char *utf8, double font_size,
     CGColorSpaceRelease(cspace);
     if (!ctx) { free(buf); return NULL; }
 
-    // Draw in the same bottom-left-origin CG context the image path uses (no
-    // extra flip) so the text bitmap has the identical top-down layout.
+    // Bottom-left-origin context (matches the image path -> top-down bitmap).
     NSGraphicsContext *prev = [NSGraphicsContext currentContext];
     NSGraphicsContext *gc = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
     [NSGraphicsContext setCurrentContext:gc];
-    [as drawAtPoint:NSMakePoint(4, 3)];
+    for (int i = 0; i < n; i++) {
+        CGFloat y = 3 + (n - 1 - i) * lineH;   // line 0 at the top (highest y)
+        [lines[i] drawAtPoint:NSMakePoint(4, y) withAttributes:attrs];
+    }
     [gc flushGraphics];
     [NSGraphicsContext setCurrentContext:prev];
     CGContextRelease(ctx);
