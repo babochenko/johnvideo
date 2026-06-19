@@ -157,19 +157,26 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     jv_timeline *tl = [self.host timeline];
     if (!tl) return;
 
-    // Ruler: a tick every second.
+    // Ruler with an adaptive tick step (so labels never crowd when zoomed out).
     [[NSColor colorWithCalibratedWhite:0.18 alpha:1.0] setFill];
     NSRectFill(NSMakeRect(0, 0, self.bounds.size.width, kRulerHeight));
     NSDictionary *tick = @{ NSFontAttributeName: [NSFont systemFontOfSize:9],
                             NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:0.85 alpha:1.0] };
     double span = (self.bounds.size.width - kHeaderWidth) / self.pps;
-    int s0 = (int)_scrollX, s1 = (int)(_scrollX + span) + 1;
-    for (int s = s0; s <= s1; s++) {
-        CGFloat x = [self xForTime:s];
+    const double steps[] = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600 };
+    double step = steps[(sizeof steps / sizeof steps[0]) - 1];
+    for (size_t i = 0; i < sizeof steps / sizeof steps[0]; i++)
+        if (steps[i] * self.pps >= 56) { step = steps[i]; break; }   // ~56px min spacing
+    double t0 = floor(_scrollX / step) * step;
+    for (double tt = t0; tt <= _scrollX + span; tt += step) {
+        CGFloat x = [self xForTime:tt];
         if (x < kHeaderWidth) continue;
         [[NSColor colorWithCalibratedWhite:0.4 alpha:1.0] setFill];
         NSRectFill(NSMakeRect(x, 0, 1, kRulerHeight));
-        [[NSString stringWithFormat:@"%d", s] drawAtPoint:NSMakePoint(x + 2, 3) withAttributes:tick];
+        int sec = (int)(tt + 0.5);
+        NSString *lbl = sec < 60 ? [NSString stringWithFormat:@"%ds", sec]
+                                 : [NSString stringWithFormat:@"%d:%02d", sec / 60, sec % 60];
+        [lbl drawAtPoint:NSMakePoint(x + 2, 3) withAttributes:tick];
     }
 
     // Current playhead time (m:ss.mmm), right-aligned in the ruler — bright.
@@ -279,7 +286,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 
     jv_track *t = NULL; size_t idx = 0;
     jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
-    if (c && [self.host bladeActive]) { [self.host bladeCutClip:c]; _drag = DRAG_NONE; return; }   // blade: slice at playhead
+    if (c && [self.host bladeActive]) { [self.host bladeCutClip:c atTime:[self timeForX:p.x]]; _drag = DRAG_NONE; return; }   // blade: slice where clicked
     if (c) {
         if (e.modifierFlags & NSEventModifierFlagCommand) { [self.host toggleSelectClip:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];

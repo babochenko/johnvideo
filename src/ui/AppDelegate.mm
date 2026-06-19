@@ -30,6 +30,7 @@ static const CGFloat kTimelineHeight = 240.0;
 @property(nonatomic, strong) NSView *bar;        // glass toolbar pill
 @property(nonatomic, strong) NSView *timeline;
 @property(nonatomic, strong) NSView *preview;
+@property(nonatomic, strong) NSView *leftModule; // optional module chip left of the bar
 @property(nonatomic, assign) NSSize  barSize;
 @end
 
@@ -49,6 +50,11 @@ static const CGFloat kTimelineHeight = 240.0;
     self.preview.frame  = NSMakeRect(0, kTimelineHeight, w, h - kTimelineHeight > 0 ? h - kTimelineHeight : 0);
     CGFloat bw = self.barSize.width, bh = self.barSize.height;
     self.bar.frame = NSMakeRect((w - bw) / 2, 10, bw, bh);   // floats, bottom-center
+    // Module chip floats just left of the bar (doesn't shift the main buttons).
+    if (self.leftModule) {
+        CGFloat lw = self.leftModule.frame.size.width;
+        self.leftModule.frame = NSMakeRect((w - bw) / 2 - lw - 8, 10, lw, bh);
+    }
 }
 @end
 
@@ -145,7 +151,6 @@ static const CGFloat kTimelineHeight = 240.0;
         x += bw + gap;
         return b;
     };
-    _bladeButton = mk(@"Blade", @selector(toggleBladeAction));   // leftmost; fixed slot
     _playButton = mk(@"▶", @selector(togglePlay));
     _recButton  = mk(@"● Rec", @selector(toggleRecord));
     mk(@"Import…", @selector(importMedia));
@@ -155,6 +160,18 @@ static const CGFloat kTimelineHeight = 240.0;
     inner.frame = NSMakeRect(0, 0, barSize.width, barSize.height);
     inner.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     NSView *bar = inner;   // transparent container; capsules float over content
+
+    // Module chip (orange "Blade"), shown only while the blade tool is armed.
+    _bladeButton = [NSButton buttonWithTitle:@"Blade" target:self action:@selector(toggleBladeAction)];
+    _bladeButton.bordered = NO;
+    _bladeButton.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    _bladeButton.wantsLayer = YES;
+    _bladeButton.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
+    _bladeButton.layer.cornerRadius = barSize.height / 2;
+    _bladeButton.contentTintColor = [NSColor blackColor];
+    [_bladeButton sizeToFit];
+    _bladeButton.frame = NSMakeRect(0, 0, _bladeButton.frame.size.width + 24, barSize.height);
+    _bladeButton.hidden = YES;
 
     _preview = [[PreviewView alloc] initWithFrame:NSZeroRect];
     _preview.host = self;
@@ -166,9 +183,11 @@ static const CGFloat kTimelineHeight = 240.0;
     content.barSize = barSize;
     content.timeline = _timelineView;
     content.preview = _preview;
+    content.leftModule = _bladeButton;
     [content addSubview:_timelineView];
     [content addSubview:_preview];
     [content addSubview:bar];           // glass floats on top of the preview
+    [content addSubview:_bladeButton];
     [content setNeedsLayout:YES];
     [_window setContentView:content];
 
@@ -791,10 +810,11 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 - (void)focusTrack:(int)dir {
     NSInteger n = (NSInteger)_timeline->track_count;
     if (n == 0) return;
-    NSInteger ti;
-    if (_focusTrack < 0) ti = (dir > 0) ? 0 : n - 1;
-    else ti = (_focusTrack + dir + n) % n;
-    [self focusOnTrack:ti];
+    NSInteger ti = (_focusTrack < 0) ? (dir > 0 ? -1 : n) : _focusTrack;
+    for (NSInteger step = 0; step < n; step++) {        // skip empty tracks, wrapping
+        ti = (ti + dir + n) % n;
+        if (_timeline->tracks[ti].clip_count > 0) { [self focusOnTrack:ti]; return; }
+    }
 }
 
 // ---- Blade tool ----
@@ -802,22 +822,23 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 
 - (void)toggleBlade {
     _bladeMode = !_bladeMode;
-    _bladeButton.contentTintColor = _bladeMode ? [NSColor systemOrangeColor] : nil;
-    _bladeButton.bordered = _bladeMode;   // subtle emphasis when armed
+    _bladeButton.hidden = !_bladeMode;     // chip only present while armed
+    [(RootView *)_window.contentView setNeedsLayout:YES];
     [self refreshAll];
 }
 - (void)toggleBladeAction { [self toggleBlade]; }
 
-- (void)bladeCutClip:(jv_clip *)c {
+// Split clip c at absolute time t (where the user clicked).
+- (void)bladeCutClip:(jv_clip *)c atTime:(double)t {
     if (!c) return;
     for (size_t i = 0; i < _timeline->track_count; i++) {
-        jv_track *t = &_timeline->tracks[i];
-        for (size_t j = 0; j < t->clip_count; j++) {
-            if (&t->clips[j] == c) {
-                if (_playhead <= c->start_time || _playhead >= c->start_time + c->duration) return;
+        jv_track *trk = &_timeline->tracks[i];
+        for (size_t j = 0; j < trk->clip_count; j++) {
+            if (&trk->clips[j] == c) {
+                if (t <= c->start_time || t >= c->start_time + c->duration) return;
                 [self recordUndo];
-                jv_clip *second = jv_track_split_clip(t, j, _playhead);
-                if (second) [self selectTrack:t clip:second];
+                jv_clip *second = jv_track_split_clip(trk, j, t);
+                if (second) [self selectTrack:trk clip:second];
                 [self refreshAll];
                 return;
             }
@@ -867,6 +888,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 
 // ---- Project save / open (text .jvp) ----
 - (void)saveToPath:(NSString *)path {
+    _timeline->pixels_per_second = _pps;   // persist the timeline zoom
     if (jv_project_save(_timeline, path)) {
         _projectPath = path;
         [self showToast:[NSString stringWithFormat:@"%@ saved", path.lastPathComponent]
@@ -898,6 +920,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     _audio.timeline = _timeline;
     jv_timeline_destroy(old);
     _playhead = 0;
+    if (_timeline->pixels_per_second > 0) _pps = _timeline->pixels_per_second;   // restore zoom
     _projectPath = panel.URL.path;     // subsequent Cmd+S saves here
     [self refreshAll];
 }

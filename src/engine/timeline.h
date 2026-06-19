@@ -98,6 +98,7 @@ typedef struct jv_timeline {
     size_t    track_count;
     size_t    track_cap;
     double    playhead;      // seconds
+    double    pixels_per_second; // UI zoom hint, persisted (0 = unset)
     double   *markers;       // sorted marker times (seconds)
     size_t    marker_count;
     size_t    marker_cap;

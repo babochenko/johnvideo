@@ -72,5 +72,5 @@ static const CGFloat kRulerHeight = 18.0;
 // Blade tool (modal): toggle, query, and cut a clip at the playhead.
 - (void)toggleBlade;
 - (BOOL)bladeActive;
-- (void)bladeCutClip:(jv_clip *)c;
+- (void)bladeCutClip:(jv_clip *)c atTime:(double)t;
 @end

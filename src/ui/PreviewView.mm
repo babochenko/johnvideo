@@ -17,7 +17,10 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
     BOOL             _editing;     // typing into a text clip in place
     jv_clip         *_editClip;    // text clip being edited
     NSMutableString *_editText;    // working copy of the edited string
+    BOOL             _editSelAll;  // whole-string selection (cmd+a)
 }
+
+- (BOOL)becomeFirstResponder { return YES; }
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -314,9 +317,10 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         [gctx restoreGraphicsState];
     }
 
-    // Text-edit caret: a bar at the right edge of the edited clip.
+    // Text-edit caret (+ select-all highlight) on the edited clip.
     if (_editing && _editClip) {
         NSRect r = [self displayRectForClip:_editClip];
+        if (_editSelAll) { [[NSColor colorWithSRGBRed:0.3 green:0.5 blue:1 alpha:0.35] setFill]; NSRectFill(NSInsetRect(r, -2, -2)); }
         [[NSColor whiteColor] setFill];
         NSRectFill(NSMakeRect(NSMaxX(r) + 1, NSMinY(r), 2, r.size.height));
     }
@@ -358,7 +362,9 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self commitTextEditing];
     _editClip = c;
     _editing = YES;
+    _editSelAll = YES;   // start with the whole string selected (type to replace)
     _editText = [NSMutableString stringWithUTF8String:(c->u.text.string ? c->u.text.string : "")];
+    [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:self];
     [self.host refreshAll];
 }
@@ -371,6 +377,10 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self.host refreshAll];
 }
 
+- (void)clearSelectionIfAny {
+    if (_editSelAll) { [_editText setString:@""]; _editSelAll = NO; }
+}
+
 // Handle a key while editing; returns YES if consumed.
 - (BOOL)handleEditingKey:(NSEvent *)e {
     if (!_editing) return NO;
@@ -378,21 +388,32 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     NSString *ig = e.charactersIgnoringModifiers;
     unichar k = ig.length ? [ig characterAtIndex:0] : 0;
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
 
-    if ((m & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) && lk == 'v') {   // paste text
-        NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-        if (clip.length) { [_editText appendString:clip]; [self applyEditedText]; }
-        return YES;
+    if (m & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
+        if (lk == 'a') { _editSelAll = YES; [self.host refreshAll]; return YES; }       // select all
+        if (lk == 'c') { [pb clearContents]; [pb setString:_editText forType:NSPasteboardTypeString]; return YES; }
+        if (lk == 'x') { [pb clearContents]; [pb setString:_editText forType:NSPasteboardTypeString];
+                         [_editText setString:@""]; _editSelAll = NO; [self applyEditedText]; return YES; }
+        if (lk == 'v') { NSString *s = [pb stringForType:NSPasteboardTypeString];
+                         [self clearSelectionIfAny]; if (s.length) [_editText appendString:s]; [self applyEditedText]; return YES; }
+        return YES;   // swallow other modified keys while editing
     }
-    if (k == 0x1B) { [self commitTextEditing]; return YES; }                 // esc commits
-    if (k == 0x0D || k == 0x03) { [_editText appendString:@"\n"]; [self applyEditedText]; return YES; }  // return = newline (multiline)
-    if (k == NSDeleteCharacter || k == 0x08) {                              // backspace
-        if (_editText.length) [_editText deleteCharactersInRange:NSMakeRange(_editText.length - 1, 1)];
+    if (k == 0x1B) { [self commitTextEditing]; return YES; }                            // esc commits
+    if (k == 0x0D || k == 0x03) { [self clearSelectionIfAny]; [_editText appendString:@"\n"]; [self applyEditedText]; return YES; }
+    if (k == NSDeleteCharacter || k == 0x08) {                                          // backspace
+        if (_editSelAll) { [_editText setString:@""]; _editSelAll = NO; }
+        else if (_editText.length) [_editText deleteCharactersInRange:NSMakeRange(_editText.length - 1, 1)];
         [self applyEditedText];
         return YES;
     }
     NSString *ins = e.characters;
-    if (ins.length && [ins characterAtIndex:0] >= 0x20) { [_editText appendString:ins]; [self applyEditedText]; return YES; }
+    if (ins.length && [ins characterAtIndex:0] >= 0x20) {
+        [self clearSelectionIfAny];
+        [_editText appendString:ins];
+        [self applyEditedText];
+        return YES;
+    }
     return YES;   // swallow other keys while editing
 }
 
