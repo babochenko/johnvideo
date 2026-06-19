@@ -4,9 +4,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>johnvideo</string>
+    <string>John Video</string>
     <key>CFBundleDisplayName</key>
-    <string>johnvideo</string>
+    <string>John Video</string>
     <key>CFBundleIdentifier</key>
     <string>dev.johnvideo.app</string>
     <key>CFBundleVersion</key>

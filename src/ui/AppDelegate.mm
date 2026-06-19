@@ -50,10 +50,10 @@ static const CGFloat kTimelineHeight = 240.0;
     self.preview.frame  = NSMakeRect(0, kTimelineHeight, w, h - kTimelineHeight > 0 ? h - kTimelineHeight : 0);
     CGFloat bw = self.barSize.width, bh = self.barSize.height;
     self.bar.frame = NSMakeRect((w - bw) / 2, 10, bw, bh);   // floats, bottom-center
-    // Module chip floats just left of the bar (doesn't shift the main buttons).
+    // Module chip floats just left of the bar, vertically centered in it.
     if (self.leftModule) {
-        CGFloat lw = self.leftModule.frame.size.width;
-        self.leftModule.frame = NSMakeRect((w - bw) / 2 - lw - 8, 10, lw, bh);
+        CGFloat lw = self.leftModule.frame.size.width, lh = self.leftModule.frame.size.height;
+        self.leftModule.frame = NSMakeRect((w - bw) / 2 - lw - 8, 10 + (bh - lh) / 2, lw, lh);
     }
 }
 @end
@@ -117,7 +117,7 @@ static const CGFloat kTimelineHeight = 240.0;
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered defer:NO];
-    [_window setTitle:@"johnvideo"];
+    [_window setTitle:@"John Video"];
     _window.backgroundColor = [NSColor blackColor];
     _window.titlebarAppearsTransparent = YES;
     _window.titleVisibility = NSWindowTitleHidden;
@@ -167,19 +167,19 @@ static const CGFloat kTimelineHeight = 240.0;
     _bladeButton.bordered = NO;
     _bladeButton.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
     [_bladeButton sizeToFit];
-    CGFloat chipW = _bladeButton.frame.size.width + 24;
-    _bladeButton.frame = NSMakeRect(0, 0, chipW, barSize.height);
+    CGFloat chipW = _bladeButton.frame.size.width + 28;   // same padding as toolbar buttons
+    _bladeButton.frame = NSMakeRect(0, 0, chipW, bh);     // same height as toolbar buttons
     _bladeButton.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     if (@available(macOS 26.0, *)) {
-        NSGlassEffectView *g = [[NSGlassEffectView alloc] initWithFrame:NSMakeRect(0, 0, chipW, barSize.height)];
-        g.cornerRadius = barSize.height / 2;
+        NSGlassEffectView *g = [[NSGlassEffectView alloc] initWithFrame:NSMakeRect(0, 0, chipW, bh)];
+        g.cornerRadius = bh / 2;
         g.tintColor = [NSColor systemOrangeColor];
         g.contentView = _bladeButton;
         _bladeChip = g;
     } else {
         _bladeButton.wantsLayer = YES;
         _bladeButton.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
-        _bladeButton.layer.cornerRadius = barSize.height / 2;
+        _bladeButton.layer.cornerRadius = bh / 2;
         _bladeChip = _bladeButton;
     }
     _bladeChip.hidden = YES;
@@ -219,6 +219,15 @@ static const CGFloat kTimelineHeight = 240.0;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)s { return YES; }
+
+// Save the project before quitting (Cmd+Q, menu, window close, etc.).
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    if (_transportPlaying) [self stopTransport];
+    if (_projectPath) [self saveToPath:_projectPath];
+    else if (![self timelineEmpty]) [self saveProject:nil];   // prompt for a name once
+    return NSTerminateNow;
+}
+
 - (void)applicationWillTerminate:(NSNotification *)n {
     [_audio stop];
     jv_timeline_destroy(_timeline);
@@ -366,6 +375,15 @@ static const CGFloat kTimelineHeight = 240.0;
     else                          snprintf(name, sizeof name, "Audio %d", ++an);
     jv_timeline_add_track(_timeline, kind, name);
     jv_timeline_order_tracks(_timeline);   // keep video tracks above audio
+    [self refreshAll];
+}
+
+- (void)renameTrackAtIndex:(size_t)index to:(NSString *)name {
+    if (index >= _timeline->track_count || name.length == 0) return;
+    [self recordUndo];
+    jv_track *t = &_timeline->tracks[index];
+    free(t->name);
+    t->name = strdup(name.UTF8String);
     [self refreshAll];
 }
 

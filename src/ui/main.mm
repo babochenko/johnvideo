@@ -15,7 +15,7 @@ int main(void) {
         NSMenuItem *appItem = [[NSMenuItem alloc] init];
         [menubar addItem:appItem];
         NSMenu *appMenu = [[NSMenu alloc] init];
-        [appMenu addItemWithTitle:@"Quit johnvideo"
+        [appMenu addItemWithTitle:@"Quit John Video"
                            action:@selector(terminate:)
                     keyEquivalent:@"q"];
         [appItem setSubmenu:appMenu];

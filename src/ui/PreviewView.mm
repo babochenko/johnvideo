@@ -241,6 +241,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     NSPoint mid = [self centerForClip:_dragClip];
 
     if (_mode == PV_MOVE) {
+        [[NSCursor closedHandCursor] set];
         NSPoint adj = NSMakePoint(p.x - _grab.x, p.y - _grab.y);
         NSPoint n = [self normFromPoint:adj];
         n = [self snapCenter:n forClip:_dragClip];   // sticky to canvas edges/center
@@ -260,7 +261,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self.host refreshAll];
 }
 
-- (void)mouseUp:(NSEvent *)e { _dragClip = NULL; _mode = PV_NONE; }
+- (void)mouseUp:(NSEvent *)e { _dragClip = NULL; _mode = PV_NONE; [[NSCursor arrowCursor] set]; }
 
 - (void)drawRect:(NSRect)dirty {
     [[NSColor colorWithCalibratedWhite:0.08 alpha:1.0] setFill];

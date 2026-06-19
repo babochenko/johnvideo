@@ -20,6 +20,7 @@ static const CGFloat kRulerHeight = 18.0;
 
 - (void)addTrackOfKind:(jv_track_kind)kind;
 - (void)removeTrackAtIndex:(size_t)index;
+- (void)renameTrackAtIndex:(size_t)index to:(NSString *)name;
 
 // Drop/paste an image (provide either encoded bytes or a file path) onto the
 // first visual track at time t.

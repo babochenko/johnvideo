@@ -336,6 +336,9 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     jv_timeline *tl = [self.host timeline];
     double t = [self timeForX:p.x];
+    // Drag cursor feedback.
+    if (_drag == DRAG_MOVE || _drag == DRAG_TRACK || _drag == DRAG_MARK) [[NSCursor closedHandCursor] set];
+    else if (_drag == DRAG_TRIM || _drag == DRAG_TRIM_LEFT) [[NSCursor resizeLeftRightCursor] set];
     if (_drag == DRAG_TRACK) {
         size_t ti = [self trackIndexForY:p.y];
         if (ti != SIZE_MAX && ti != _trackDragIdx) {
@@ -410,6 +413,7 @@ static int cmp_double(const void *a, const void *b) {
         [self.host refreshAll];
     }
     _drag = DRAG_NONE; _dragClip = NULL; _dragTrack = NULL;
+    [[NSCursor arrowCursor] set];
 }
 
 // ---- Zoom (see more/less time) ----
@@ -462,6 +466,8 @@ static int cmp_double(const void *a, const void *b) {
         av.target = self; aa.target = self;
         if (ti != SIZE_MAX) {
             [menu addItem:[NSMenuItem separatorItem]];
+            NSMenuItem *ren = [menu addItemWithTitle:@"Rename Track…" action:@selector(renameTrackFromMenu:) keyEquivalent:@""];
+            ren.target = self; ren.representedObject = @(ti);
             NSMenuItem *del = [menu addItemWithTitle:@"Delete This Track" action:@selector(deleteTrackFromMenu:) keyEquivalent:@""];
             del.target = self;
             del.representedObject = @(ti);
@@ -487,6 +493,20 @@ static int cmp_double(const void *a, const void *b) {
 
 - (void)addVideoTrack { [self.host addTrackOfKind:JV_TRACK_VISUAL]; }
 - (void)addAudioTrack { [self.host addTrackOfKind:JV_TRACK_AUDIO]; }
+
+- (void)renameTrackFromMenu:(NSMenuItem *)item {
+    size_t ti = [[item representedObject] unsignedLongValue];
+    jv_timeline *tl = [self.host timeline];
+    if (ti >= tl->track_count) return;
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"Rename Track";
+    NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 220, 24)];
+    tf.stringValue = tl->tracks[ti].name ? @(tl->tracks[ti].name) : @"";
+    a.accessoryView = tf;
+    [a addButtonWithTitle:@"Rename"];
+    [a addButtonWithTitle:@"Cancel"];
+    if ([a runModal] == NSAlertFirstButtonReturn) [self.host renameTrackAtIndex:ti to:tf.stringValue];
+}
 - (void)deleteTrackFromMenu:(NSMenuItem *)item {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = @"Delete this track?";
