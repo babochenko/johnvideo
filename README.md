@@ -7,13 +7,16 @@ A simple **native macOS video editor** written in **C** (engine) + **Objective-C
 ## Build & run
 
 ```sh
-make            # build  -> build/johnvideo.app
+make            # build  -> build/johnvideo.app  (display name "John Video")
 make run        # build and launch the .app bundle (needed for the mic permission prompt)
 make run-direct # run the raw binary (stderr logs; mic NOT granted this way)
+make install    # copy to /Applications/John Video.app  (or: make install INSTALL_DIR="$HOME/Applications")
 make clean      # remove build/
 ```
 
 Requirements: macOS 26 (Tahoe) + Xcode 26 command-line tools (SDK 26), Homebrew `ffmpeg` (`brew install ffmpeg`). Apple Silicon.
+
+> After editing **any header**, an incremental `make` rebuilds dependents automatically (`-MMD -MP`). If you ever pull changes and see a crash on load, do `make clean && make` once. The app icon comes from `icon.png` (→ `AppIcon.icns` at build time).
 
 ---
 
@@ -70,7 +73,8 @@ johnvideo/
 ├── Info.plist               # bundle metadata + NSMicrophoneUsageDescription
 ├── .gitignore               # build output, macOS cruft, *.assets/, exported media
 ├── README.md                # this file (full knowledge dump)
-├── readme.json              # machine-readable context + 58 tracked requirements
+├── readme.json              # machine-readable context + tracked user requirements
+├── icon.png                 # app icon source (→ AppIcon.icns at build time)
 ├── src/
 │   ├── engine/              # pure C, UI-agnostic
 │   │   ├── timeline.h/.c     # data model, compositor (jv_render_frame), mixer (jv_mix_audio),
@@ -226,7 +230,7 @@ track A Music
 
 ## Requirements (all delivered)
 
-All 58 tracked user requests are implemented; the machine-readable list with per-item notes lives in **`readme.json`**. Grouped summary:
+All tracked user requests are implemented; the machine-readable list with per-item notes lives in **`readme.json`**. Grouped summary:
 
 - **Core:** native C+FFmpeg app, Makefile, Homebrew; paste/drag-drop images (incl. browser); right-click text; video import; multi-track audio; voiceover; music; MP4 export.
 - **Playback/timeline:** wall-clock transport, time readout, playhead boundary snap, take placed at record start, horizontal zoom, sticky clip move/trim (both edges), add/remove tracks, move clips between tracks, track reorder, video-above-audio, top-track z-order, horizontal/vertical scroll, delete-track confirmation.
@@ -261,4 +265,27 @@ clang test/test_export.c build/obj/engine/*.o $(pkg-config --cflags --libs libav
 # orientation probes and .jvp round-trip are .mm; link Cocoa + Project.mm/Media.mm as needed
 ```
 
-`make` first to produce `build/obj/engine/*.o`. The orientation probes (`test_orient.mm`, `test_display.mm`) document why the preview is non-flipped with top-down buffers.
+`make` first to produce `build/obj/engine/*.o`. The orientation probes (`test_orient.mm`, `test_display.mm`) document why the preview is non-flipped with top-down buffers. Pattern for ad-hoc tests: write a small `.mm` that includes `Project.h`/`timeline.h`, compile it linking `src/ui/Project.mm src/ui/Media.mm build/obj/engine/timeline.o build/obj/engine/decoder.o` + Cocoa/ImageIO/CoreText/CoreGraphics + the ffmpeg libs.
+
+---
+
+## Orientation for the next session (read this first)
+
+**What this is:** a working, single-window macOS timeline editor. Engine in C, UI in Obj-C++. No app sandbox, no code signing, no Xcode project — just the Makefile.
+
+**Mental model / where things live**
+- All editor actions funnel through the **`EditorHost` protocol** (`Editor.h`), implemented by `AppDelegate`. The two views (`PreviewView`, `TimelineView`) hold a weak `host` and call it; they never touch each other.
+- The **engine never knows about AppKit**; the UI never re-implements compositing/mixing — it calls `jv_render_frame` / `jv_mix_audio`.
+- **Coordinates:** clip position is normalized `(cx, cy)`, `cy` top-down (0 = top). `scale` = fraction of canvas height. The preview view is **non-flipped** and draws the top-down RGBA via `NSImage` (this combination was verified by probe tests — don't "fix" it without re-checking).
+- **Selection** = a per-clip `selected` flag in the struct (not a pointer set). `_selected` in AppDelegate is just the *primary*. Group ops iterate the flag.
+- **Transport** is wall-clock (`NSProcessInfo.systemUptime`) in AppDelegate, independent of the audio engine, so the playhead moves even if audio fails.
+
+**Sharp edges that already bit us (don't repeat)**
+- **Adding a field mid-struct** to `jv_clip`/`jv_timeline` is safe *only* because the Makefile now tracks header deps (`-MMD -MP`). If you change the build rules, keep that or stale objects will corrupt memory.
+- **Text in-place editing** is hand-rolled keystroke capture (the preview is first responder), with its own caret index. Arrow keys are in the function-key Unicode range (≥0x20) — filter them or they get typed in. `NSTextField` overlays were tried and were unreliable.
+- **`NSStringDrawing` multiline orientation** is fiddly; `jv_rasterize_text` draws each line by hand to guarantee top-down. Verified with a probe.
+- **AVAudioSourceNode** must use the **output's** format (sample rate + interleaved-ness) and set `*silence = NO`, or playback is silent.
+- **Project `str` values** escape `\` and `\n` (line-based format). Anything line-based must escape newlines.
+- **Cmd+C/V/Z** are Edit-menu key equivalents → they reach `copy:`/`paste:`/`undo:` (handled on the views/host), *not* `keyDown:`. Cmd+A/X and bare keys reach `keyDown:`.
+
+**To resume:** `make && make run`. Check `git log` for recent direction; `readme.json` has the per-feature request log. Open `/Users/<you>/Movies/.../project.jvp`-style files via Cmd+O. When in doubt about a render/orientation question, write a headless probe (see Tests) rather than eyeballing the GUI.
