@@ -491,7 +491,7 @@ static const CGFloat kNotifH = 30;
 }
 
 - (void)setPixelsPerSecond:(double)pps {
-    if (pps < 10) pps = 10;
+    if (pps < 1) pps = 1;
     if (pps > 600) pps = 600;
     _pps = pps;
     [self refreshAll];
