@@ -104,7 +104,11 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
                     fprintf(f, "  clip text start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f font=%.4f color=0x%08X\n",
                             c->start_time, c->duration, c->in_offset, tx->cx, tx->cy,
                             tx->scale, tx->rotation, tx->font_size, tx->color);
-                    fprintf(f, "    str %s\n", tx->string ? tx->string : "");
+                    // Escape backslashes and newlines so the value stays on one line.
+                    NSString *raw = tx->string ? @(tx->string) : @"";
+                    NSString *esc = [[raw stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]
+                                          stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+                    fprintf(f, "    str %s\n", esc.UTF8String);
                     break;
                 }
                 case JV_CLIP_VIDEO: {
@@ -231,9 +235,18 @@ jv_timeline *jv_project_load(NSString *path) {
                 curClip->u.audio.channels = 2;
             }
         } else if (strncmp(s, "str ", 4) == 0 && curClip && curClip->type == JV_CLIP_TEXT) {
-            curClip->u.text.string = strdup(s + 4);
+            // Unescape \n (multiline) and \\ from the saved value.
+            NSMutableString *out = [NSMutableString string];
+            const char *p = s + 4;
+            while (*p) {
+                if (p[0] == '\\' && p[1] == 'n') { [out appendString:@"\n"]; p += 2; }
+                else if (p[0] == '\\' && p[1] == '\\') { [out appendString:@"\\"]; p += 2; }
+                else { [out appendFormat:@"%c", *p]; p++; }
+            }
+            const char *str = out.UTF8String;
+            curClip->u.text.string = strdup(str);
             int w = 0, h = 0;
-            curClip->u.text.rgba = jv_rasterize_text(s + 4, curClip->u.text.font_size,
+            curClip->u.text.rgba = jv_rasterize_text(str, curClip->u.text.font_size,
                                                      curClip->u.text.color, &w, &h);
             curClip->u.text.width = w; curClip->u.text.height = h;
         } else if ((strncmp(s, "src ", 4) == 0 || strncmp(s, "asset ", 6) == 0) && curClip) {
