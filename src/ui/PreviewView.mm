@@ -7,6 +7,8 @@
 
 typedef enum { PV_NONE, PV_MOVE, PV_RESIZE, PV_ROTATE } pv_mode;
 
+static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
+
 @interface PreviewView () <NSTextFieldDelegate>
 @end
 
@@ -29,6 +31,25 @@ typedef enum { PV_NONE, PV_MOVE, PV_RESIZE, PV_ROTATE } pv_mode;
 
 - (BOOL)isFlipped { return NO; }   // standard y-up: NSImage draws our top-down buffer upright
 - (BOOL)acceptsFirstResponder { return YES; }
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *a in [self.trackingAreas copy]) [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:self.bounds
+        options:(NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect)
+          owner:self userInfo:nil]];
+}
+
+- (void)mouseMoved:(NSEvent *)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    NSCursor *cur = [NSCursor arrowCursor];
+    jv_clip *sel = [self.host selectedClip];
+    if (sel && [self clipIsVisual:sel]) {
+        if (pt_dist(p, [self rotateHandleForClip:sel]) < 12)      cur = [NSCursor openHandCursor];
+        else if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) cur = [NSCursor crosshairCursor];
+    }
+    [cur set];
+}
 
 // Compute the largest rect with the timeline's aspect ratio that fits bounds.
 - (NSRect)fitRect {

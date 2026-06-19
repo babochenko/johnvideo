@@ -2,7 +2,7 @@
 #import "TimelineView.h"
 #import "Media.h"
 
-typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG_TRACK } drag_mode;
+typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG_TRACK, DRAG_MARK } drag_mode;
 
 @implementation TimelineView {
     drag_mode  _drag;
@@ -10,6 +10,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     jv_clip   *_dragClip;
     double     _grabOffset;   // seconds between clip start and grab point
     size_t     _trackDragIdx; // track being reordered
+    size_t     _markIdx;      // marker being dragged
     double     _scrollX;      // pan offset in seconds (time at the left edge)
     CGFloat    _scrollY;      // pan offset in pixels down the track list
 }
@@ -24,6 +25,28 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *a in [self.trackingAreas copy]) [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:self.bounds
+        options:(NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect)
+          owner:self userInfo:nil]];
+}
+
+- (void)mouseMoved:(NSEvent *)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    NSCursor *cur = [NSCursor arrowCursor];
+    if (p.y >= kRulerHeight && p.x >= kHeaderWidth) {
+        jv_track *t = NULL; size_t idx = 0;
+        jv_clip *c = [self clipAtPoint:p track:&t index:&idx];
+        if (c) {
+            NSRect r = [self rectForClip:c onTrack:idx];
+            if (p.x > NSMaxX(r) - 8 || p.x < NSMinX(r) + 8) cur = [NSCursor resizeLeftRightCursor];
+        }
+    }
+    [cur set];
+}
 
 // ---- Geometry ----
 - (double)pps { return [self.host pixelsPerSecond]; }
@@ -229,7 +252,15 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         if (c && c->type == JV_CLIP_TEXT) { [self.host selectTrack:t clip:c]; [self.host beginEditingClip:c]; return; }
     }
 
-    if (p.y < kRulerHeight) { _drag = DRAG_SCRUB; [self.host seekTo:[self snapTime:[self timeForX:p.x]]]; return; }
+    if (p.y < kRulerHeight) {
+        jv_timeline *tl = [self.host timeline];
+        for (size_t i = 0; i < tl->marker_count; i++) {
+            if (fabs([self xForTime:tl->markers[i]] - p.x) < 6) {
+                [self.host recordUndo]; _drag = DRAG_MARK; _markIdx = i; return;   // drag a marker
+            }
+        }
+        _drag = DRAG_SCRUB; [self.host seekTo:[self snapTime:[self timeForX:p.x]]]; return;
+    }
 
     // Header column: start a track reorder drag.
     if (p.x < kHeaderWidth) {
@@ -296,6 +327,14 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         }
         return;
     }
+    if (_drag == DRAG_MARK) {
+        if (_markIdx < tl->marker_count) {
+            double nt = [self snapTime:[self timeForX:p.x]];
+            tl->markers[_markIdx] = nt < 0 ? 0 : nt;
+            [self.host refreshAll];
+        }
+        return;
+    }
     if (_drag == DRAG_SCRUB) {
         [self.host seekTo:[self snapTime:t]];
     } else if (_drag == DRAG_MOVE && _dragClip) {
@@ -335,9 +374,18 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     }
 }
 
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
 - (void)mouseUp:(NSEvent *)e {
     if (_drag == DRAG_TRACK) {
         jv_timeline_order_tracks([self.host timeline]);   // keep video above audio
+        [self.host refreshAll];
+    } else if (_drag == DRAG_MARK) {
+        jv_timeline *tl = [self.host timeline];
+        qsort(tl->markers, tl->marker_count, sizeof(double), cmp_double);   // keep sorted
         [self.host refreshAll];
     }
     _drag = DRAG_NONE; _dragClip = NULL; _dragTrack = NULL;

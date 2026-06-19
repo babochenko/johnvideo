@@ -74,6 +74,7 @@ static const CGFloat kTimelineHeight = 240.0;
     NSMutableArray<NSValue *> *_redo;
     jv_clip            _clipboard;       // copied clip (deep)
     BOOL               _hasClipboard;
+    NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
 }
 
 // ---- Setup ----
@@ -89,6 +90,7 @@ static const CGFloat kTimelineHeight = 240.0;
     _audio.timeline = _timeline;
     _undo = [NSMutableArray array];
     _redo = [NSMutableArray array];
+    _focusTrack = -1;
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
     _window = [[NSWindow alloc]
@@ -224,7 +226,29 @@ static const CGFloat kTimelineHeight = 240.0;
     [self refreshAll];
 }
 
-- (void)selectTrack:(jv_track *)t clip:(jv_clip *)c { _selected = c; }
+- (void)selectTrack:(jv_track *)t clip:(jv_clip *)c {
+    _selected = c;
+    // Keep the navigation focus on the selected clip's track.
+    if (c) {
+        for (size_t i = 0; i < _timeline->track_count; i++) {
+            jv_track *tr = &_timeline->tracks[i];
+            for (size_t j = 0; j < tr->clip_count; j++)
+                if (&tr->clips[j] == c) { _focusTrack = (NSInteger)i; return; }
+        }
+    }
+}
+
+// Clips of a track, sorted by start time (returns clip pointers).
+- (NSArray<NSValue *> *)clipsOfTrackSorted:(size_t)ti {
+    NSMutableArray<NSValue *> *a = [NSMutableArray array];
+    jv_track *t = &_timeline->tracks[ti];
+    for (size_t j = 0; j < t->clip_count; j++) [a addObject:[NSValue valueWithPointer:&t->clips[j]]];
+    [a sortUsingComparator:^NSComparisonResult(NSValue *x, NSValue *y) {
+        double sx = ((jv_clip *)x.pointerValue)->start_time, sy = ((jv_clip *)y.pointerValue)->start_time;
+        return sx < sy ? NSOrderedAscending : (sx > sy ? NSOrderedDescending : NSOrderedSame);
+    }];
+    return a;
+}
 
 - (void)setPixelsPerSecond:(double)pps {
     if (pps < 10) pps = 10;
@@ -606,22 +630,6 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 }
 
 // ---- Clip / track navigation ----
-// Flat list of all clips ordered by (start_time, track index).
-- (NSArray<NSValue *> *)orderedClips {
-    NSMutableArray<NSValue *> *a = [NSMutableArray array];
-    for (size_t i = 0; i < _timeline->track_count; i++) {
-        jv_track *t = &_timeline->tracks[i];
-        for (size_t j = 0; j < t->clip_count; j++) [a addObject:[NSValue valueWithPointer:&t->clips[j]]];
-    }
-    [a sortUsingComparator:^NSComparisonResult(NSValue *x, NSValue *y) {
-        jv_clip *cx = (jv_clip *)x.pointerValue, *cy = (jv_clip *)y.pointerValue;
-        if (cx->start_time < cy->start_time) return NSOrderedAscending;
-        if (cx->start_time > cy->start_time) return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    return a;
-}
-
 - (void)selectClipAndSeek:(jv_clip *)c {
     if (!c) return;
     _selected = c;
@@ -630,40 +638,43 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     [self refreshAll];
 }
 
+// h / l: move horizontally to the previous / next clip ON THE CURRENT TRACK
+// (by start time), wrapping around.
 - (void)selectAdjacentClip:(int)dir {
-    NSArray<NSValue *> *order = [self orderedClips];
-    if (order.count == 0) return;
+    if (_timeline->track_count == 0) return;
+    if (_focusTrack < 0) _focusTrack = 0;
+    NSArray<NSValue *> *clips = [self clipsOfTrackSorted:(size_t)_focusTrack];
+    if (clips.count == 0) return;
     NSInteger idx = -1;
-    for (NSUInteger i = 0; i < order.count; i++)
-        if ((jv_clip *)order[i].pointerValue == _selected) { idx = (NSInteger)i; break; }
-    NSInteger next = idx < 0 ? (dir > 0 ? 0 : (NSInteger)order.count - 1) : idx + dir;
-    if (next < 0) next = 0;
-    if (next >= (NSInteger)order.count) next = (NSInteger)order.count - 1;
-    [self selectClipAndSeek:(jv_clip *)order[(NSUInteger)next].pointerValue];
+    for (NSUInteger i = 0; i < clips.count; i++)
+        if ((jv_clip *)clips[i].pointerValue == _selected) { idx = (NSInteger)i; break; }
+    NSInteger n = (NSInteger)clips.count;
+    NSInteger next = (idx < 0) ? (dir > 0 ? 0 : n - 1) : (idx + dir + n) % n;
+    [self selectClipAndSeek:(jv_clip *)clips[(NSUInteger)next].pointerValue];
 }
 
-- (void)focusTrack:(int)dir {
-    if (_timeline->track_count == 0) return;
-    // Determine the current track from the selection; default to the top.
-    NSInteger cur = -1;
-    for (size_t i = 0; i < _timeline->track_count && _selected; i++) {
-        jv_track *t = &_timeline->tracks[i];
-        for (size_t j = 0; j < t->clip_count; j++)
-            if (&t->clips[j] == _selected) { cur = (NSInteger)i; break; }
-        if (cur >= 0) break;
-    }
-    NSInteger ti = (cur < 0) ? 0 : cur + dir;
-    if (ti < 0) ti = 0;
-    if (ti >= (NSInteger)_timeline->track_count) ti = (NSInteger)_timeline->track_count - 1;
-    // Select the clip on that track nearest the playhead, if any.
+// Select the clip on track ti nearest the playhead (or NULL if empty).
+- (void)focusOnTrack:(NSInteger)ti {
+    _focusTrack = ti;
     jv_track *t = &_timeline->tracks[ti];
     jv_clip *best = NULL; double bestD = 1e18;
     for (size_t j = 0; j < t->clip_count; j++) {
         double d = fabs(t->clips[j].start_time - _playhead);
         if (d < bestD) { bestD = d; best = &t->clips[j]; }
     }
-    if (best) _selected = best; else _selected = NULL;
+    _selected = best;
     [self refreshAll];
+}
+
+// j (dir +1, down): wraps to the top.  k (dir -1, up): wraps to the bottom.
+// With no focus yet, j starts at the top and k starts at the bottom.
+- (void)focusTrack:(int)dir {
+    NSInteger n = (NSInteger)_timeline->track_count;
+    if (n == 0) return;
+    NSInteger ti;
+    if (_focusTrack < 0) ti = (dir > 0) ? 0 : n - 1;
+    else ti = (_focusTrack + dir + n) % n;
+    [self focusOnTrack:ti];
 }
 
 - (void)beginEditingClip:(jv_clip *)c {
