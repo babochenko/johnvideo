@@ -470,10 +470,24 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 }
 
 - (void)paste:(id)sender {
+    if (_editing) {                                   // paste text into the edited clip
+        NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+        [self clearSelectionIfAny];
+        if (s.length) [_editText appendString:s];
+        [self applyEditedText];
+        return;
+    }
     if ([self.host pasteClipAtPlayhead]) return;
     [self ingestPasteboard:[NSPasteboard generalPasteboard] atTime:[self.host playhead]];
 }
-- (void)copy:(id)sender { [self.host copySelectedClip]; }
+- (void)copy:(id)sender {
+    if (_editing) {                                   // copy the edited text
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents]; [pb setString:(_editText ?: @"") forType:NSPasteboardTypeString];
+        return;
+    }
+    [self.host copySelectedClip];
+}
 - (void)undo:(id)sender { [self.host performUndo]; }
 - (void)redo:(id)sender { [self.host performRedo]; }
 

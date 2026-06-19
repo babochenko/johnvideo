@@ -147,6 +147,7 @@ Clip     { type, start_time, duration, in_offset, union payload }
 | Ctrl + ← / → , Ctrl + h / l | Jump the playhead to the previous / next marker |
 | m | Add a marker at the playhead |
 | t | Add text at the playhead (enters in-place edit) |
+| b | Toggle the blade tool (click a clip to split it at the click point) |
 | Ctrl + `+` / `-` | Zoom timeline in / out |
 | Delete / Backspace | Delete the marker at the playhead, else the selected clip (works on the preview too) |
 | Cmd/Ctrl + C / V | Copy / paste clip (paste falls back to image from clipboard) |
@@ -157,7 +158,9 @@ Clip     { type, start_time, duration, in_offset, union payload }
 
 **Markers**: yellow flags on the timeline, **draggable** to reposition. Add with `m` or right-click the ruler → Add Marker Here; delete with Backspace at the playhead or right-click → Delete Marker; jump with Cmd+←/→ (incl. start/end) or Ctrl+←/→ / Ctrl+h/l; saved in the project (`mark <t>` lines); undoable.
 
-**Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes/backspace edit live (reflected on the timeline); Return/Esc commits. (Implemented by capturing keys directly, not an overlay field.)
+**Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes edit live (reflected on the timeline). It starts with the whole string selected; **Return** inserts a newline (multiline), **Esc** or clicking away commits. Clipboard works while editing: **Cmd+A** select all, **Cmd+C/X** copy/cut, **Cmd+V** paste text, **Backspace** delete. (Implemented by capturing keys directly, not an overlay field.)
+
+**Blade tool**: press **B** to arm (or click the orange Liquid-Glass **Blade** chip, which only appears while armed, to disarm). With it armed, clicking a clip **splits it at the click point**; the cursor becomes a crosshair. Splits are ordinary clips, so they're saved in the project and undoable.
 
 **Cursors**: the pointer shows a resize cursor over clip edges and markers, and resize/rotate cursors over the preview handles.
 
@@ -201,7 +204,7 @@ track A Music
     src /Users/me/music.mp3
 ```
 
-Clip fields are labeled `key=value` and parsed order-independently: `start dur in` for every clip; image/video add `cx cy scale rot`; text adds `font color`; audio adds `gain rate`.
+Clip fields are labeled `key=value` and parsed order-independently: `start dur in` for every clip; image/video add `cx cy scale rot`; text adds `font color`; audio adds `gain rate`. Top-level optional lines: `zoom <pps>` (timeline scale) and `mark <t>` (markers).
 
 ---
 

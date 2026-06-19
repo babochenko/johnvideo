@@ -92,6 +92,7 @@ static const CGFloat kTimelineHeight = 240.0;
     NSString          *_projectPath;     // current .jvp path (Cmd+S saves here without asking)
     BOOL               _bladeMode;       // modal blade tool
     NSButton          *_bladeButton;
+    NSView            *_bladeChip;        // glass wrapper around the blade button
 }
 
 // ---- Setup ----
@@ -161,17 +162,27 @@ static const CGFloat kTimelineHeight = 240.0;
     inner.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     NSView *bar = inner;   // transparent container; capsules float over content
 
-    // Module chip (orange "Blade"), shown only while the blade tool is armed.
+    // Module chip (orange Liquid Glass "Blade"), shown only while blade is armed.
     _bladeButton = [NSButton buttonWithTitle:@"Blade" target:self action:@selector(toggleBladeAction)];
     _bladeButton.bordered = NO;
     _bladeButton.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
-    _bladeButton.wantsLayer = YES;
-    _bladeButton.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
-    _bladeButton.layer.cornerRadius = barSize.height / 2;
-    _bladeButton.contentTintColor = [NSColor blackColor];
     [_bladeButton sizeToFit];
-    _bladeButton.frame = NSMakeRect(0, 0, _bladeButton.frame.size.width + 24, barSize.height);
-    _bladeButton.hidden = YES;
+    CGFloat chipW = _bladeButton.frame.size.width + 24;
+    _bladeButton.frame = NSMakeRect(0, 0, chipW, barSize.height);
+    _bladeButton.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    if (@available(macOS 26.0, *)) {
+        NSGlassEffectView *g = [[NSGlassEffectView alloc] initWithFrame:NSMakeRect(0, 0, chipW, barSize.height)];
+        g.cornerRadius = barSize.height / 2;
+        g.tintColor = [NSColor systemOrangeColor];
+        g.contentView = _bladeButton;
+        _bladeChip = g;
+    } else {
+        _bladeButton.wantsLayer = YES;
+        _bladeButton.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
+        _bladeButton.layer.cornerRadius = barSize.height / 2;
+        _bladeChip = _bladeButton;
+    }
+    _bladeChip.hidden = YES;
 
     _preview = [[PreviewView alloc] initWithFrame:NSZeroRect];
     _preview.host = self;
@@ -183,11 +194,11 @@ static const CGFloat kTimelineHeight = 240.0;
     content.barSize = barSize;
     content.timeline = _timelineView;
     content.preview = _preview;
-    content.leftModule = _bladeButton;
+    content.leftModule = _bladeChip;
     [content addSubview:_timelineView];
     [content addSubview:_preview];
     [content addSubview:bar];           // glass floats on top of the preview
-    [content addSubview:_bladeButton];
+    [content addSubview:_bladeChip];
     [content setNeedsLayout:YES];
     [_window setContentView:content];
 
@@ -822,7 +833,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 
 - (void)toggleBlade {
     _bladeMode = !_bladeMode;
-    _bladeButton.hidden = !_bladeMode;     // chip only present while armed
+    _bladeChip.hidden = !_bladeMode;       // chip only present while armed
     [(RootView *)_window.contentView setNeedsLayout:YES];
     [self refreshAll];
 }
