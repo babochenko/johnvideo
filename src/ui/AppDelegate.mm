@@ -17,12 +17,51 @@ static const double kImageDuration = 1.0;
 static const double kTextDuration  = 1.0;
 static const CGFloat kTimelineHeight = 240.0;
 
-// A transient bottom-right toast. If it carries a fileURL, clicking it opens
-// the file (e.g. the exported movie).
-@interface ToastButton : NSButton
+// Reusable bottom-right notification: a clickable body (opens fileURL if set)
+// plus a ✕ close button. Self-sizing; the host positions and stacks them.
+@interface JVNotification : NSView
 @property(nonatomic, strong) NSURL *fileURL;
+@property(nonatomic, copy)   void (^onDismiss)(JVNotification *);
+- (instancetype)initWithMessage:(NSString *)msg;
+- (void)setMessage:(NSString *)msg;
 @end
-@implementation ToastButton @end
+
+@implementation JVNotification {
+    NSButton *_body;
+    NSButton *_close;
+}
+static const CGFloat kNotifH = 30;
+- (instancetype)initWithMessage:(NSString *)msg {
+    if ((self = [super initWithFrame:NSMakeRect(0, 0, 100, kNotifH)])) {
+        self.wantsLayer = YES;
+        self.layer.backgroundColor = [NSColor colorWithWhite:0 alpha:0.82].CGColor;
+        self.layer.cornerRadius = 8;
+        _body = [NSButton buttonWithTitle:@"" target:self action:@selector(bodyClicked)];
+        _body.bordered = NO;
+        _body.contentTintColor = [NSColor whiteColor];
+        _body.font = [NSFont systemFontOfSize:13];
+        [self addSubview:_body];
+        _close = [NSButton buttonWithTitle:@"✕" target:self action:@selector(closeClicked)];
+        _close.bordered = NO;
+        _close.contentTintColor = [NSColor whiteColor];
+        _close.font = [NSFont systemFontOfSize:13 weight:NSFontWeightBold];
+        [self addSubview:_close];
+        [self setMessage:msg];
+    }
+    return self;
+}
+- (void)setMessage:(NSString *)msg {
+    _body.title = msg;
+    [_body sizeToFit];
+    CGFloat bw = _body.frame.size.width;
+    CGFloat total = 12 + bw + 8 + 18 + 8;       // pad + body + gap + ✕ + pad
+    self.frame = NSMakeRect(self.frame.origin.x, self.frame.origin.y, total, kNotifH);
+    _body.frame = NSMakeRect(12, 0, bw, kNotifH);
+    _close.frame = NSMakeRect(total - 26, 0, 22, kNotifH);
+}
+- (void)bodyClicked  { if (self.fileURL) [[NSWorkspace sharedWorkspace] openURL:self.fileURL]; }
+- (void)closeClicked { if (self.onDismiss) self.onDismiss(self); }
+@end
 
 // Layout: timeline pinned to the bottom, preview filling above it, and a glass
 // toolbar floating over the lower part of the preview (Liquid Glass look).
@@ -92,6 +131,7 @@ static const CGFloat kTimelineHeight = 240.0;
     BOOL               _bladeMode;       // modal blade tool
     NSButton          *_bladeButton;
     NSView            *_bladeChip;        // glass wrapper around the blade button
+    NSMutableArray<JVNotification *> *_notifications;   // bottom-right stack
 }
 
 // ---- Setup ----
@@ -107,6 +147,7 @@ static const CGFloat kTimelineHeight = 240.0;
     _audio.timeline = _timeline;
     _undo = [NSMutableArray array];
     _redo = [NSMutableArray array];
+    _notifications = [NSMutableArray array];
     _focusTrack = -1;
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
@@ -632,46 +673,47 @@ static const CGFloat kTimelineHeight = 240.0;
     [a runModal];
 }
 
-// Create a bottom-right toast (no auto-dismiss); caller manages its lifetime.
-- (ToastButton *)makeToast:(NSString *)msg {
-    NSView *content = _window.contentView;
-    ToastButton *toast = [ToastButton buttonWithTitle:msg target:self action:@selector(toastClicked:)];
-    toast.bezelStyle = NSBezelStyleRounded;
-    toast.bordered = NO;
-    toast.wantsLayer = YES;
-    toast.layer.backgroundColor = [NSColor colorWithWhite:0 alpha:0.78].CGColor;
-    toast.layer.cornerRadius = 8;
-    toast.contentTintColor = [NSColor whiteColor];
-    toast.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
-    [self sizeToast:toast];
-    [content addSubview:toast];
-    return toast;
+// ---- Notifications (abstract, reusable) ----
+// Present a bottom-right notification. sticky:YES stays until the ✕ or a click;
+// sticky:NO auto-fades after a few seconds. Returns it so callers can update it.
+- (JVNotification *)presentNotification:(NSString *)msg fileURL:(NSURL *)url sticky:(BOOL)sticky {
+    JVNotification *n = [[JVNotification alloc] initWithMessage:msg];
+    n.fileURL = url;
+    n.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    __weak AppDelegate *ws = self;
+    n.onDismiss = ^(JVNotification *x) { [ws dismissNotification:x]; };
+    [_notifications addObject:n];
+    [_window.contentView addSubview:n];
+    [self layoutNotifications];
+    if (!sticky) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [self dismissNotification:n]; });
+    }
+    return n;
 }
 
-- (void)sizeToast:(ToastButton *)toast {
-    [toast sizeToFit];
-    NSSize sz = NSMakeSize(toast.frame.size.width + 28, 30);
-    toast.frame = NSMakeRect(_window.contentView.bounds.size.width - sz.width - 16, 16, sz.width, sz.height);
+- (void)dismissNotification:(JVNotification *)n {
+    if (![_notifications containsObject:n]) return;
+    [_notifications removeObject:n];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.3; n.animator.alphaValue = 0;
+    } completionHandler:^{ [n removeFromSuperview]; }];
+    [self layoutNotifications];
 }
 
-- (void)fadeToast:(ToastButton *)toast after:(double)secs {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(secs * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-            ctx.duration = 0.4; toast.animator.alphaValue = 0;
-        } completionHandler:^{ [toast removeFromSuperview]; }];
-    });
+// Stack notifications up from the bottom-right corner.
+- (void)layoutNotifications {
+    CGFloat w = _window.contentView.bounds.size.width;
+    CGFloat y = 16;
+    for (JVNotification *n in _notifications) {
+        n.frame = NSMakeRect(w - n.frame.size.width - 16, y, n.frame.size.width, n.frame.size.height);
+        y += n.frame.size.height + 8;
+    }
 }
 
-// Transient toast that fades after a few seconds.
+// Convenience: transient auto-fading toast (e.g. "saved").
 - (void)showToast:(NSString *)msg fileURL:(NSURL *)url {
-    ToastButton *toast = [self makeToast:msg];
-    toast.fileURL = url;
-    [self fadeToast:toast after:4.0];
-}
-
-- (void)toastClicked:(ToastButton *)sender {
-    if (sender.fileURL) [[NSWorkspace sharedWorkspace] openURL:sender.fileURL];
+    [self presentNotification:msg fileURL:url sticky:NO];
 }
 
 - (void)toggleRecord {
@@ -1050,13 +1092,13 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     NSString *out = panel.URL.path;
     [self stopTransport];
 
-    // Non-blocking toast with a live elapsed timer (no modal sheet).
-    ToastButton *toast = [self makeToast:@"Exporting… 0.0s"];
+    // Sticky notification with a live elapsed timer (no modal sheet); it stays
+    // until clicked or dismissed with the ✕.
+    JVNotification *note = [self presentNotification:@"Exporting… 0.0s" fileURL:nil sticky:YES];
     double start = NSProcessInfo.processInfo.systemUptime;
     NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *_) {
-        toast.title = [NSString stringWithFormat:@"Exporting… %.1fs",
-                       NSProcessInfo.processInfo.systemUptime - start];
-        [self sizeToast:toast];
+        [note setMessage:[NSString stringWithFormat:@"Exporting… %.1fs", NSProcessInfo.processInfo.systemUptime - start]];
+        [self layoutNotifications];
     }];
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -1064,14 +1106,17 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [timer invalidate];
             double secs = NSProcessInfo.processInfo.systemUptime - start;
+            NSDateFormatter *df = [[NSDateFormatter alloc] init];
+            df.dateFormat = @"HH:mm:ss";
+            NSString *finishedAt = [df stringFromDate:[NSDate date]];
             if (rc == 0) {
-                toast.title = [NSString stringWithFormat:@"Exported %@ in %.1fs — click to view", out.lastPathComponent, secs];
-                toast.fileURL = [NSURL fileURLWithPath:out];
+                [note setMessage:[NSString stringWithFormat:@"Exported %@ at %@ (%.1fs) — click to view",
+                                  out.lastPathComponent, finishedAt, secs]];
+                note.fileURL = [NSURL fileURLWithPath:out];
             } else {
-                toast.title = [NSString stringWithFormat:@"Export failed (error %d)", rc];
+                [note setMessage:[NSString stringWithFormat:@"Export failed at %@ (error %d)", finishedAt, rc]];
             }
-            [self sizeToast:toast];
-            [self fadeToast:toast after:8.0];
+            [self layoutNotifications];   // sticky: remains until the user dismisses it
         });
     });
 }

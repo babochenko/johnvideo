@@ -176,7 +176,7 @@ Inserted **image and text clips are 1 s** long. Images (paste **and** Import) an
 
 **Cursors**: the pointer shows a resize cursor over clip edges and markers, and resize/rotate cursors over the preview handles.
 
-**Notifications**: a transient toast appears bottom-right when a project is saved (`<name>.jvp saved`) and when an export finishes (`Exported <name>.mp4 — click to view`, clicking opens the file). It fades after a few seconds.
+**Notifications**: a reusable bottom-right notification component (`JVNotification` — clickable body + ✕ close, self-sizing, stackable). Two modes via `presentNotification:fileURL:sticky:`. **Save** uses a transient toast that auto-fades. **Export** uses a **sticky** one: a live elapsed timer while encoding, then `Exported <name> at HH:mm:ss (Ns) — click to view` that **stays until clicked or dismissed with the ✕**.
 
 ---
 
