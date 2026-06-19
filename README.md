@@ -1,4 +1,4 @@
-# johnvideo
+# John Video
 
 A simple **native macOS video editor** written in **C** (engine) + **Objective-C++** (UI), using **FFmpeg** for decode/encode/mux. Timeline-based: images, text, video, multi-track audio with voiceover recording, and source-quality MP4 export. Liquid Glass UI, built with a plain Makefile against Homebrew FFmpeg.
 

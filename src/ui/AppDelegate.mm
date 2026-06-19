@@ -88,7 +88,6 @@ static const CGFloat kTimelineHeight = 240.0;
     jv_clip            _clipboard;       // copied clip (deep)
     BOOL               _hasClipboard;
     NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
-    NSMutableArray<NSValue *> *_selection; // all selected clips (primary = _selected)
     NSString          *_projectPath;     // current .jvp path (Cmd+S saves here without asking)
     BOOL               _bladeMode;       // modal blade tool
     NSButton          *_bladeButton;
@@ -108,7 +107,6 @@ static const CGFloat kTimelineHeight = 240.0;
     _audio.timeline = _timeline;
     _undo = [NSMutableArray array];
     _redo = [NSMutableArray array];
-    _selection = [NSMutableArray array];
     _focusTrack = -1;
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
@@ -278,11 +276,34 @@ static const CGFloat kTimelineHeight = 240.0;
     [self refreshAll];
 }
 
+// Selection lives as a per-clip flag, so it survives array moves/reallocs.
+- (void)clearSelectionFlags {
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) t->clips[j].selected = 0;
+    }
+}
+- (jv_clip *)anySelectedClip {
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) if (t->clips[j].selected) return &t->clips[j];
+    }
+    return NULL;
+}
+- (size_t)selectedCount {
+    size_t n = 0;
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) if (t->clips[j].selected) n++;
+    }
+    return n;
+}
+
 - (void)selectTrack:(jv_track *)t clip:(jv_clip *)c {
+    [self clearSelectionFlags];
     _selected = c;
-    [_selection setArray:c ? @[ [NSValue valueWithPointer:c] ] : @[]];
-    // Keep the navigation focus on the selected clip's track.
     if (c) {
+        c->selected = 1;
         for (size_t i = 0; i < _timeline->track_count; i++) {
             jv_track *tr = &_timeline->tracks[i];
             for (size_t j = 0; j < tr->clip_count; j++)
@@ -291,40 +312,88 @@ static const CGFloat kTimelineHeight = 240.0;
     }
 }
 
-- (BOOL)isClipSelected:(jv_clip *)c {
-    return [_selection containsObject:[NSValue valueWithPointer:c]];
-}
+- (BOOL)isClipSelected:(jv_clip *)c { return c && c->selected; }
 
 - (void)toggleSelectClip:(jv_clip *)c {
     if (!c) return;
-    NSValue *v = [NSValue valueWithPointer:c];
-    if ([_selection containsObject:v]) {
-        [_selection removeObject:v];
-        if (_selected == c) _selected = _selection.count ? (jv_clip *)_selection.lastObject.pointerValue : NULL;
-    } else {
-        [_selection addObject:v];
-        _selected = c;
-    }
+    c->selected = !c->selected;
+    _selected = c->selected ? c : [self anySelectedClip];
     [self refreshAll];
 }
 
 - (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta {
-    for (NSValue *v in _selection) {
-        jv_clip *o = (jv_clip *)v.pointerValue;
-        if (o == c) continue;
-        double s = o->start_time + delta;
-        o->start_time = s < 0 ? 0 : s;
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) {
+            jv_clip *o = &t->clips[j];
+            if (!o->selected || o == c) continue;
+            double s = o->start_time + delta;
+            o->start_time = s < 0 ? 0 : s;
+        }
     }
 }
 
 - (void)nudgeSelectedBy:(double)seconds {
-    if (_selection.count == 0) return;
+    if ([self selectedCount] == 0) return;
     [self recordUndo];
-    for (NSValue *v in _selection) {
-        jv_clip *o = (jv_clip *)v.pointerValue;
-        double s = o->start_time + seconds;
-        o->start_time = s < 0 ? 0 : s;
+    [self shiftSelectionExcept:NULL by:seconds];
+    [self refreshAll];
+}
+
+// Select every clip on c's track between the current primary selection and c.
+- (void)extendSelectionTo:(jv_clip *)c {
+    if (!c) return;
+    // Find c's track.
+    jv_track *track = NULL;
+    for (size_t i = 0; i < _timeline->track_count && !track; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) if (&t->clips[j] == c) { track = t; break; }
     }
+    if (!track) return;
+    double a = _selected ? _selected->start_time : c->start_time;
+    double lo = a < c->start_time ? a : c->start_time;
+    double hi = a > c->start_time ? a : c->start_time;
+    for (size_t j = 0; j < track->clip_count; j++)
+        if (track->clips[j].start_time >= lo - 1e-6 && track->clips[j].start_time <= hi + 1e-6)
+            track->clips[j].selected = 1;
+    _selected = c;
+    [self refreshAll];
+}
+
+// Move every selected clip by `delta` tracks (same kind), keeping selection
+// and the primary clip identity.
+- (void)shiftSelectionTracksBy:(int)delta {
+    if (delta == 0 || [self selectedCount] == 0) return;
+    size_t cap = [self selectedCount];
+    jv_clip *ex = (jv_clip *)malloc(cap * sizeof(jv_clip));
+    NSInteger *srcTrk = (NSInteger *)malloc(cap * sizeof(NSInteger));
+    size_t n = 0; NSInteger primaryIdx = -1;
+    for (size_t i = 0; i < _timeline->track_count; i++) {
+        jv_track *t = &_timeline->tracks[i];
+        size_t w = 0;
+        for (size_t j = 0; j < t->clip_count; j++) {
+            if (t->clips[j].selected) {
+                if (&t->clips[j] == _selected) primaryIdx = (NSInteger)n;
+                ex[n] = t->clips[j]; srcTrk[n] = (NSInteger)i; n++;
+            } else t->clips[w++] = t->clips[j];
+        }
+        t->clip_count = w;
+    }
+    jv_clip **slots = (jv_clip **)malloc(n * sizeof(jv_clip *));
+    for (size_t k = 0; k < n; k++) {
+        NSInteger tgt = srcTrk[k] + delta;
+        if (tgt < 0) tgt = 0;
+        if (tgt >= (NSInteger)_timeline->track_count) tgt = (NSInteger)_timeline->track_count - 1;
+        jv_track_kind want = (ex[k].type == JV_CLIP_AUDIO) ? JV_TRACK_AUDIO : JV_TRACK_VISUAL;
+        if (_timeline->tracks[tgt].kind != want) tgt = srcTrk[k];   // don't cross the kind boundary
+        jv_track *dt = &_timeline->tracks[tgt];
+        jv_clip *slot = jv_track_add_clip(dt, ex[k].type, ex[k].start_time, ex[k].duration);
+        *slot = ex[k];
+        slot->selected = 1;
+        slots[k] = slot;
+    }
+    _selected = (primaryIdx >= 0) ? slots[primaryIdx] : [self anySelectedClip];
+    free(ex); free(srcTrk); free(slots);
     [self refreshAll];
 }
 
@@ -734,7 +803,6 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 
 - (void)swapTimelineTo:(jv_timeline *)tl {
     _selected = NULL;
-    [_selection removeAllObjects];
     _liveRecClip = NULL;
     _timeline = tl;
     _audio.timeline = tl;
@@ -798,8 +866,8 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 // ---- Clip / track navigation ----
 - (void)selectClipAndSeek:(jv_clip *)c {
     if (!c) return;
-    _selected = c;
-    [_selection setArray:@[ [NSValue valueWithPointer:c] ]];
+    [self clearSelectionFlags];
+    _selected = c; c->selected = 1;
     if (_transportPlaying) [self stopTransport];
     _playhead = c->start_time;
     [self refreshAll];
@@ -829,8 +897,9 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
         double d = fabs(t->clips[j].start_time - _playhead);
         if (d < bestD) { bestD = d; best = &t->clips[j]; }
     }
+    [self clearSelectionFlags];
     _selected = best;
-    [_selection setArray:best ? @[ [NSValue valueWithPointer:best] ] : @[]];
+    if (best) best->selected = 1;
     [self refreshAll];
 }
 
@@ -901,7 +970,6 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
                 memmove(&t->clips[j], &t->clips[j + 1], (t->clip_count - j - 1) * sizeof(jv_clip));
                 t->clip_count--;
                 if (_selected == clip) _selected = NULL;
-                [_selection removeObject:[NSValue valueWithPointer:clip]];
                 return;
             }
         }
@@ -918,6 +986,7 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 // ---- Project save / open (text .jvp) ----
 - (void)saveToPath:(NSString *)path {
     _timeline->pixels_per_second = _pps;   // persist the timeline zoom
+    _timeline->playhead = _playhead;       // persist the redline position
     if (jv_project_save(_timeline, path)) {
         _projectPath = path;
         [self showToast:[NSString stringWithFormat:@"%@ saved", path.lastPathComponent]
@@ -943,12 +1012,11 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     if (!loaded) { [self alert:@"Open failed" info:panel.URL.path]; return; }
     [self stopTransport];
     _selected = NULL;
-    [_selection removeAllObjects];
     jv_timeline *old = _timeline;
     _timeline = loaded;
     _audio.timeline = _timeline;
     jv_timeline_destroy(old);
-    _playhead = 0;
+    _playhead = _timeline->playhead;     // restore the redline position
     if (_timeline->pixels_per_second > 0) _pps = _timeline->pixels_per_second;   // restore zoom
     _projectPath = panel.URL.path;     // subsequent Cmd+S saves here
     [self refreshAll];

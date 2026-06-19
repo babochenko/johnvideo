@@ -36,8 +36,10 @@ static const CGFloat kRulerHeight = 18.0;
 - (void)selectTrack:(jv_track *)t clip:(jv_clip *)c;   // single-select
 - (jv_clip *)selectedClip;                              // primary selection
 - (void)toggleSelectClip:(jv_clip *)c;                  // cmd+click multi-select
+- (void)extendSelectionTo:(jv_clip *)c;                 // shift+click range select
 - (BOOL)isClipSelected:(jv_clip *)c;
-- (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta;  // move-together drag
+- (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta;  // horizontal move-together
+- (void)shiftSelectionTracksBy:(int)delta;                   // vertical move-together
 
 // Move the selected object(s) along the timeline (cmd+h/l).
 - (void)nudgeSelectedBy:(double)seconds;

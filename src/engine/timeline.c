@@ -73,6 +73,8 @@ jv_timeline *jv_timeline_clone(const jv_timeline *src) {
     jv_timeline *tl = jv_timeline_create(src->width, src->height, src->fps);
     tl->playhead = src->playhead;
     tl->pixels_per_second = src->pixels_per_second;
+    tl->scroll_x = src->scroll_x;
+    tl->scroll_y = src->scroll_y;
     for (size_t i = 0; i < src->marker_count; i++) jv_timeline_add_marker(tl, src->markers[i]);
     for (size_t i = 0; i < src->track_count; i++) {
         const jv_track *st = &src->tracks[i];

@@ -11,9 +11,10 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     double     _grabOffset;   // seconds between clip start and grab point
     size_t     _trackDragIdx; // track being reordered
     size_t     _markIdx;      // marker being dragged
-    double     _scrollX;      // pan offset in seconds (time at the left edge)
-    CGFloat    _scrollY;      // pan offset in pixels down the track list
 }
+// Scroll is stored on the timeline model (so it persists with the project).
+- (double)sx { return [self.host timeline]->scroll_x; }
+- (double)sy { return [self.host timeline]->scroll_y; }
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -59,12 +60,12 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
 
 // ---- Geometry ----
 - (double)pps { return [self.host pixelsPerSecond]; }
-- (CGFloat)xForTime:(double)t { return kHeaderWidth + (t - _scrollX) * self.pps; }
+- (CGFloat)xForTime:(double)t { return kHeaderWidth + (t - self.sx) * self.pps; }
 - (double)timeForX:(CGFloat)x {
-    double t = _scrollX + (x - kHeaderWidth) / self.pps;
+    double t = self.sx + (x - kHeaderWidth) / self.pps;
     return t < 0 ? 0 : t;
 }
-- (CGFloat)yForTrack:(size_t)i { return kRulerHeight + i * (kTrackHeight + kTrackGap) + kTrackGap - _scrollY; }
+- (CGFloat)yForTrack:(size_t)i { return kRulerHeight + i * (kTrackHeight + kTrackGap) + kTrackGap - self.sy; }
 
 - (NSRect)rectForClip:(jv_clip *)c onTrack:(size_t)i {
     CGFloat x = [self xForTime:c->start_time];
@@ -107,6 +108,15 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         if (y >= ty && y < ty + kTrackHeight) return i;
     }
     return SIZE_MAX;
+}
+
+- (jv_track *)trackOfClip:(jv_clip *)c {
+    jv_timeline *tl = [self.host timeline];
+    for (size_t i = 0; i < tl->track_count; i++) {
+        jv_track *t = &tl->tracks[i];
+        for (size_t j = 0; j < t->clip_count; j++) if (&t->clips[j] == c) return t;
+    }
+    return NULL;
 }
 
 - (jv_clip *)clipAtPoint:(NSPoint)p track:(jv_track **)outTrack index:(size_t *)outIdx {
@@ -167,8 +177,8 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     double step = steps[(sizeof steps / sizeof steps[0]) - 1];
     for (size_t i = 0; i < sizeof steps / sizeof steps[0]; i++)
         if (steps[i] * self.pps >= 56) { step = steps[i]; break; }   // ~56px min spacing
-    double t0 = floor(_scrollX / step) * step;
-    for (double tt = t0; tt <= _scrollX + span; tt += step) {
+    double t0 = floor(self.sx / step) * step;
+    for (double tt = t0; tt <= self.sx + span; tt += step) {
         CGFloat x = [self xForTime:tt];
         if (x < kHeaderWidth) continue;
         [[NSColor colorWithCalibratedWhite:0.4 alpha:1.0] setFill];
@@ -186,7 +196,6 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     NSSize tsz = [timeStr sizeWithAttributes:timeAttrs];
     [timeStr drawAtPoint:NSMakePoint(self.bounds.size.width - tsz.width - 8, 2) withAttributes:timeAttrs];
 
-    jv_clip *sel = [self.host selectedClip];
     NSDictionary *labelAttrs = @{ NSFontAttributeName: [NSFont boldSystemFontOfSize:11],
                                   NSForegroundColorAttributeName: [NSColor whiteColor] };
 
@@ -289,6 +298,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     if (c && [self.host bladeActive]) { [self.host bladeCutClip:c atTime:[self timeForX:p.x]]; _drag = DRAG_NONE; return; }   // blade: slice where clicked
     if (c) {
         if (e.modifierFlags & NSEventModifierFlagCommand) { [self.host toggleSelectClip:c]; _drag = DRAG_NONE; return; }
+        if (e.modifierFlags & NSEventModifierFlagShift)   { [self.host extendSelectionTo:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];
         if (![self.host isClipSelected:c]) [self.host selectTrack:t clip:c];   // keep multi-selection if part of it
         NSRect r = [self rectForClip:c onTrack:idx];
@@ -359,14 +369,15 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     if (_drag == DRAG_SCRUB) {
         [self.host seekTo:[self snapTime:t]];
     } else if (_drag == DRAG_MOVE && _dragClip) {
-        // Move to the same-kind track under the pointer, if different.
+        // Move all selected clips together to the track under the pointer.
         size_t ti = [self trackIndexForY:p.y];
         if (ti != SIZE_MAX) {
-            jv_track *target = &tl->tracks[ti];
-            if (target != _dragTrack && target->kind == _dragTrack->kind) {
-                size_t ci = (size_t)(_dragClip - _dragTrack->clips);
-                jv_clip *moved = jv_clip_move_to_track(_dragTrack, ci, target);
-                if (moved) { _dragClip = moved; _dragTrack = target; [self.host selectTrack:target clip:moved]; }
+            NSInteger curTi = _dragTrack - tl->tracks;
+            if ((NSInteger)ti != curTi && tl->tracks[ti].kind == _dragTrack->kind) {
+                [self.host shiftSelectionTracksBy:(int)((NSInteger)ti - curTi)];
+                _dragClip = [self.host selectedClip];
+                if (_dragClip) _dragTrack = [self trackOfClip:_dragClip];
+                if (!_dragClip || !_dragTrack) return;
             }
         }
         double ns = t - _grabOffset, dur = _dragClip->duration;
@@ -428,12 +439,14 @@ static int cmp_double(const void *a, const void *b) {
         return;
     }
     // Horizontal scroll pans time; vertical scroll moves down the track list.
-    _scrollX -= e.scrollingDeltaX / self.pps;
-    if (_scrollX < 0) _scrollX = 0;
-    _scrollY -= e.scrollingDeltaY;
+    jv_timeline *tl = [self.host timeline];
+    double nx = tl->scroll_x - e.scrollingDeltaX / self.pps;
+    tl->scroll_x = nx < 0 ? 0 : nx;
+    double ny = tl->scroll_y - e.scrollingDeltaY;
     CGFloat maxY = [self contentHeight] - self.bounds.size.height;
-    if (_scrollY > maxY) _scrollY = maxY > 0 ? maxY : 0;
-    if (_scrollY < 0) _scrollY = 0;
+    if (ny > maxY) ny = maxY > 0 ? maxY : 0;
+    if (ny < 0) ny = 0;
+    tl->scroll_y = ny;
     [self setNeedsDisplay:YES];
 }
 

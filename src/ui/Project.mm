@@ -73,6 +73,8 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
     fprintf(f, "johnvideo 1\n");
     fprintf(f, "canvas %d %d %.4f\n", tl->width, tl->height, tl->fps);
     if (tl->pixels_per_second > 0) fprintf(f, "zoom %.4f\n", tl->pixels_per_second);
+    fprintf(f, "playhead %.4f\n", tl->playhead);
+    fprintf(f, "scroll %.4f %.4f\n", tl->scroll_x, tl->scroll_y);
     for (size_t i = 0; i < tl->marker_count; i++) fprintf(f, "mark %.4f\n", tl->markers[i]);
 
     int asset = 0;
@@ -188,6 +190,10 @@ jv_timeline *jv_project_load(NSString *path) {
             }
         } else if (strncmp(s, "zoom ", 5) == 0) {
             tl->pixels_per_second = atof(s + 5);
+        } else if (strncmp(s, "playhead ", 9) == 0) {
+            tl->playhead = atof(s + 9);
+        } else if (strncmp(s, "scroll ", 7) == 0) {
+            sscanf(s, "scroll %lf %lf", &tl->scroll_x, &tl->scroll_y);
         } else if (strncmp(s, "mark ", 5) == 0) {
             jv_timeline_add_marker(tl, atof(s + 5));
         } else if (strncmp(s, "track ", 6) == 0) {

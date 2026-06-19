@@ -74,6 +74,7 @@ typedef struct jv_clip {
     double       start_time; // seconds on the timeline
     double       duration;   // seconds
     double       in_offset;  // seconds into the source (trim head)
+    int          selected;   // transient UI selection flag (travels with the struct)
     union {
         jv_image image;
         jv_text  text;
@@ -99,6 +100,8 @@ typedef struct jv_timeline {
     size_t    track_cap;
     double    playhead;      // seconds
     double    pixels_per_second; // UI zoom hint, persisted (0 = unset)
+    double    scroll_x;      // timeline pan: seconds at the left edge (persisted)
+    double    scroll_y;      // timeline pan: pixels down the track list (persisted)
     double   *markers;       // sorted marker times (seconds)
     size_t    marker_count;
     size_t    marker_cap;
