@@ -17,6 +17,13 @@ static const double kImageDuration = 4.0;
 static const double kTextDuration  = 3.0;
 static const CGFloat kTimelineHeight = 240.0;
 
+// A transient bottom-right toast. If it carries a fileURL, clicking it opens
+// the file (e.g. the exported movie).
+@interface ToastButton : NSButton
+@property(nonatomic, strong) NSURL *fileURL;
+@end
+@implementation ToastButton @end
+
 // Layout: timeline pinned to the bottom, preview filling above it, and a glass
 // toolbar floating over the lower part of the preview (Liquid Glass look).
 @interface RootView : NSView
@@ -76,6 +83,7 @@ static const CGFloat kTimelineHeight = 240.0;
     BOOL               _hasClipboard;
     NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
     NSMutableArray<NSValue *> *_selection; // all selected clips (primary = _selected)
+    NSString          *_projectPath;     // current .jvp path (Cmd+S saves here without asking)
 }
 
 // ---- Setup ----
@@ -484,6 +492,37 @@ static const CGFloat kTimelineHeight = 240.0;
     [a runModal];
 }
 
+// Bottom-right transient toast. If url is given the toast is clickable and
+// opens that file; it fades out after a few seconds.
+- (void)showToast:(NSString *)msg fileURL:(NSURL *)url {
+    NSView *content = _window.contentView;
+    ToastButton *toast = [ToastButton buttonWithTitle:msg target:self action:@selector(toastClicked:)];
+    toast.fileURL = url;
+    toast.bezelStyle = NSBezelStyleRounded;
+    toast.bordered = NO;
+    toast.wantsLayer = YES;
+    toast.layer.backgroundColor = [NSColor colorWithWhite:0 alpha:0.78].CGColor;
+    toast.layer.cornerRadius = 8;
+    toast.contentTintColor = [NSColor whiteColor];
+    [toast sizeToFit];
+    NSSize sz = NSMakeSize(toast.frame.size.width + 28, 30);
+    toast.frame = NSMakeRect(content.bounds.size.width - sz.width - 16, 16, sz.width, sz.height);
+    toast.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    [content addSubview:toast];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            ctx.duration = 0.4;
+            toast.animator.alphaValue = 0;
+        } completionHandler:^{ [toast removeFromSuperview]; }];
+    });
+}
+
+- (void)toastClicked:(ToastButton *)sender {
+    if (sender.fileURL) [[NSWorkspace sharedWorkspace] openURL:sender.fileURL];
+}
+
 - (void)toggleRecord {
     if (![_audio isRecording]) {
         // Ask for mic permission, then start synchronously so button state and
@@ -554,10 +593,12 @@ static const CGFloat kTimelineHeight = 240.0;
 - (void)transportToggle { [self togglePlay]; }
 
 - (void)nudgePlayheadBy:(double)seconds {
-    if (_transportPlaying) [self stopTransport];
     double t = _playhead + seconds;
     if (t < 0) t = 0;
+    double dur = jv_timeline_duration(_timeline);
+    if (dur > 0 && t > dur) t = dur;
     _playhead = t;
+    if (_transportPlaying) { [self startClockFrom:t]; [_audio playFrom:t]; }   // keep playing from the new spot
     [self refreshAll];
 }
 
@@ -777,12 +818,22 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 }
 
 // ---- Project save / open (text .jvp) ----
+- (void)saveToPath:(NSString *)path {
+    if (jv_project_save(_timeline, path)) {
+        _projectPath = path;
+        [self showToast:[NSString stringWithFormat:@"%@ saved", path.lastPathComponent]
+                fileURL:[NSURL fileURLWithPath:path]];
+    } else {
+        [self alert:@"Save failed" info:path];
+    }
+}
+
 - (void)saveProject:(id)sender {
+    if (_projectPath) { [self saveToPath:_projectPath]; return; }   // Cmd+S saves in place
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.nameFieldStringValue = @"project.jvp";
     if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
-    if (!jv_project_save(_timeline, panel.URL.path))
-        [self alert:@"Save failed" info:panel.URL.path];
+    [self saveToPath:panel.URL.path];
 }
 
 - (void)openProject:(id)sender {
@@ -793,11 +844,13 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     if (!loaded) { [self alert:@"Open failed" info:panel.URL.path]; return; }
     [self stopTransport];
     _selected = NULL;
+    [_selection removeAllObjects];
     jv_timeline *old = _timeline;
     _timeline = loaded;
     _audio.timeline = _timeline;
     jv_timeline_destroy(old);
     _playhead = 0;
+    _projectPath = panel.URL.path;     // subsequent Cmd+S saves here
     [self refreshAll];
 }
 
@@ -822,10 +875,12 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
         int rc = jv_export_mp4(self->_timeline, out.UTF8String, NULL, NULL);
         dispatch_async(dispatch_get_main_queue(), ^{
             [sheet endSheet:alert.window];
-            NSAlert *done = [[NSAlert alloc] init];
-            done.messageText = rc == 0 ? @"Export complete" : @"Export failed";
-            done.informativeText = rc == 0 ? out : [NSString stringWithFormat:@"error %d", rc];
-            [done runModal];
+            if (rc == 0) {
+                [self showToast:[NSString stringWithFormat:@"Exported %@ — click to view", out.lastPathComponent]
+                        fileURL:[NSURL fileURLWithPath:out]];
+            } else {
+                [self alert:@"Export failed" info:[NSString stringWithFormat:@"error %d", rc]];
+            }
         });
     });
 }

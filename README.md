@@ -139,7 +139,7 @@ Clip     { type, start_time, duration, in_offset, union payload }
 | Key | Action |
 |---|---|
 | Space | Play / stop (▶/⏸). At the end it holds on the last frame; pressing play again restarts from the start |
-| ← / → | Move the playhead ∓ 0.5 s |
+| ← / → | Move the playhead ∓ 0.5 s (does **not** pause playback — it keeps playing from the new spot) |
 | h / l | Select previous / next clip on the current track (wraps) |
 | j / k | Move focus down / up between tracks (j wraps to top, k to bottom; defaults top/bottom) |
 | Cmd + h / l | Move the selected object(s) ∓ 0.5 s along the timeline |
@@ -151,7 +151,7 @@ Clip     { type, start_time, duration, in_offset, union payload }
 | Delete / Backspace | Delete the marker at the playhead, else the selected clip (works on the preview too) |
 | Cmd/Ctrl + C / V | Copy / paste clip (paste falls back to image from clipboard) |
 | Cmd/Ctrl + Z / Shift + Z | Undo / redo |
-| Cmd + S / Cmd + O | Save / Open project |
+| Cmd + S / Cmd + O | Save / Open project (after the first save or an open, Cmd+S saves in place without asking) |
 
 **Selection**: click a clip to select; **Cmd+click** to toggle multiple into the selection — dragging any of them moves them all together.
 
@@ -160,6 +160,8 @@ Clip     { type, start_time, duration, in_offset, union payload }
 **Editing text**: double-click a text clip on the **preview** or **timeline**. Editing happens in place on the preview — a caret shows and keystrokes/backspace edit live (reflected on the timeline); Return/Esc commits. (Implemented by capturing keys directly, not an overlay field.)
 
 **Cursors**: the pointer shows a resize cursor over clip edges and markers, and resize/rotate cursors over the preview handles.
+
+**Notifications**: a transient toast appears bottom-right when a project is saved (`<name>.jvp saved`) and when an export finishes (`Exported <name>.mp4 — click to view`, clicking opens the file). It fades after a few seconds.
 
 ---
 
