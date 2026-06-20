@@ -749,6 +749,25 @@ static void test_canvas_click_empty_deselects(void) {
     CHECK([app selectedClip] == NULL, "selection cleared");
 }
 
+static void test_text_option_backspace_deletes_word(void) {
+    CASE("option+backspace deletes the previous word");
+    AppDelegate *app; PreviewView *pv = bootEditingText(&app);   // "hello world\nfoo bar", caret 19
+    unichar bs = NSDeleteCharacter;
+    key(pv, [NSString stringWithFormat:@"%C", bs], NSEventModifierFlagOption);
+    CHECK([[pv editText] isEqualToString:@"hello world\nfoo "], "deleted 'bar'");
+    key(pv, [NSString stringWithFormat:@"%C", bs], NSEventModifierFlagOption);
+    CHECK([[pv editText] isEqualToString:@"hello world\n"], "deleted 'foo '");
+}
+
+static void test_text_cmd_backspace_deletes_to_line_start(void) {
+    CASE("cmd+backspace deletes to the start of the line");
+    AppDelegate *app; PreviewView *pv = bootEditingText(&app);   // caret at end of line 2
+    unichar bs = NSDeleteCharacter;
+    key(pv, [NSString stringWithFormat:@"%C", bs], NSEventModifierFlagCommand);
+    CHECK([[pv editText] isEqualToString:@"hello world\n"], "cleared the current line");
+    CHECK([pv editCaret] == 12, "caret at the line start");
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];   // needed for NSWindow / NSView
@@ -794,6 +813,8 @@ int main(void) {
         test_text_esc_commits();
         test_text_clipboard_cut_paste();
         test_text_double_click_edits_on_canvas();
+        test_text_option_backspace_deletes_word();
+        test_text_cmd_backspace_deletes_to_line_start();
 
         // Scrub-while-playing + snapping
         test_scrub_while_playing_keeps_playing();

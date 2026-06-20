@@ -406,6 +406,14 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     else if (_editCaret > 0) { [_editText deleteCharactersInRange:NSMakeRange(_editCaret - 1, 1)]; _editCaret--; }
     [self applyEditedText];
 }
+// Delete from `from` up to the caret (used by Option/Cmd + Backspace).
+- (void)deleteEditFrom:(NSUInteger)from {
+    if (_editSelAll) { [self deleteEditBackward]; return; }
+    if (from >= _editCaret) return;
+    [_editText deleteCharactersInRange:NSMakeRange(from, _editCaret - from)];
+    _editCaret = from;
+    [self applyEditedText];
+}
 
 // Move the caret up/down a line, keeping the column where possible.
 - (void)moveCaretLine:(int)dir {
@@ -500,6 +508,15 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
             else { [self moveCaretLine:1]; return YES; }
         }
         [self.host refreshAll];
+        return YES;
+    }
+    // Modified backspace (notes-app): Option = delete previous word, Cmd = delete
+    // to the start of the line. Handled before the Cmd/Ctrl swallow below.
+    if ((k == NSDeleteCharacter || k == 0x08) && (m & (NSEventModifierFlagCommand | NSEventModifierFlagOption))) {
+        if (_editSelAll) { [self deleteEditBackward]; return YES; }
+        NSUInteger from = (m & NSEventModifierFlagCommand) ? [self lineStartFor:_editCaret]
+                                                           : [self wordLeftFrom:_editCaret];
+        [self deleteEditFrom:from];
         return YES;
     }
     if (m & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
