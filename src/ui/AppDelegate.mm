@@ -16,6 +16,7 @@
 static const double kImageDuration = 1.0;
 static const double kTextDuration  = 1.0;
 static const CGFloat kTimelineHeight = 240.0;
+static NSString *const kLastProjectKey = @"lastProject";   // user-defaults key: last open .jvp
 
 // Reusable bottom-right notification: a clickable body (opens fileURL if set)
 // plus a ✕ close button. Self-sizing; the host positions and stacks them.
@@ -244,6 +245,10 @@ static const CGFloat kNotifH = 30;
     [_window makeKeyAndOrderFront:nil];
     [_window makeFirstResponder:_timelineView];
     [NSApp activateIgnoringOtherApps:YES];
+
+    // Reopen the project that was open last time, if its file still exists.
+    NSString *last = [[NSUserDefaults standardUserDefaults] stringForKey:kLastProjectKey];
+    if (last && [[NSFileManager defaultManager] fileExistsAtPath:last]) [self loadProjectAtPath:last];
 }
 
 - (NSButton *)barButton:(NSString *)title x:(CGFloat *)x action:(SEL)sel inBar:(NSView *)bar {
@@ -1048,11 +1053,19 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
 }
 
 // ---- Project save / open (text .jvp) ----
+// Remember the current project path in user defaults so the app reopens it on
+// next launch (see applicationDidFinishLaunching: / kLastProjectKey).
+- (void)setProjectPath:(NSString *)path {
+    _projectPath = path;
+    if (path) [[NSUserDefaults standardUserDefaults] setObject:path forKey:kLastProjectKey];
+    else      [[NSUserDefaults standardUserDefaults] removeObjectForKey:kLastProjectKey];
+}
+
 - (void)saveToPath:(NSString *)path {
     _timeline->pixels_per_second = _pps;   // persist the timeline zoom
     _timeline->playhead = _playhead;       // persist the redline position
     if (jv_project_save(_timeline, path)) {
-        _projectPath = path;
+        [self setProjectPath:path];
         [self showToast:[NSString stringWithFormat:@"%@ saved", path.lastPathComponent]
                 fileURL:[NSURL fileURLWithPath:path]];
     } else {
@@ -1068,12 +1081,11 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     [self saveToPath:panel.URL.path];
 }
 
-- (void)openProject:(id)sender {
-    NSOpenPanel *panel = [NSOpenPanel openPanel];
-    panel.allowedFileTypes = @[ @"jvp" ];
-    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
-    jv_timeline *loaded = jv_project_load(panel.URL.path);
-    if (!loaded) { [self alert:@"Open failed" info:panel.URL.path]; return; }
+// Load a .jvp into the editor, replacing the current timeline. Returns NO (and
+// leaves the current timeline untouched) if the file can't be parsed.
+- (BOOL)loadProjectAtPath:(NSString *)path {
+    jv_timeline *loaded = jv_project_load(path);
+    if (!loaded) return NO;
     [self stopTransport];
     _selected = NULL;
     jv_timeline *old = _timeline;
@@ -1082,8 +1094,16 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     jv_timeline_destroy(old);
     _playhead = _timeline->playhead;     // restore the redline position
     if (_timeline->pixels_per_second > 0) _pps = _timeline->pixels_per_second;   // restore zoom
-    _projectPath = panel.URL.path;     // subsequent Cmd+S saves here
+    [self setProjectPath:path];          // subsequent Cmd+S saves here; reopened next launch
     [self refreshAll];
+    return YES;
+}
+
+- (void)openProject:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.allowedFileTypes = @[ @"jvp" ];
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
+    if (![self loadProjectAtPath:panel.URL.path]) [self alert:@"Open failed" info:panel.URL.path];
 }
 
 - (void)exportMovie {

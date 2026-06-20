@@ -427,6 +427,30 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self.host refreshAll];
 }
 
+// Caret-navigation helpers (notes-app semantics). Lines are \n-separated.
+- (NSUInteger)lineStartFor:(NSUInteger)pos {
+    while (pos > 0 && [_editText characterAtIndex:pos - 1] != '\n') pos--;
+    return pos;
+}
+- (NSUInteger)lineEndFor:(NSUInteger)pos {
+    NSUInteger n = _editText.length;
+    while (pos < n && [_editText characterAtIndex:pos] != '\n') pos++;
+    return pos;
+}
+- (NSUInteger)wordLeftFrom:(NSUInteger)pos {
+    NSCharacterSet *w = [NSCharacterSet alphanumericCharacterSet];
+    while (pos > 0 && ![w characterIsMember:[_editText characterAtIndex:pos - 1]]) pos--;   // skip separators
+    while (pos > 0 && [w characterIsMember:[_editText characterAtIndex:pos - 1]]) pos--;     // skip the word
+    return pos;
+}
+- (NSUInteger)wordRightFrom:(NSUInteger)pos {
+    NSUInteger n = _editText.length;
+    NSCharacterSet *w = [NSCharacterSet alphanumericCharacterSet];
+    while (pos < n && ![w characterIsMember:[_editText characterAtIndex:pos]]) pos++;
+    while (pos < n && [w characterIsMember:[_editText characterAtIndex:pos]]) pos++;
+    return pos;
+}
+
 - (void)applyEditedText {
     if (!_editClip) return;
     free(_editClip->u.text.string);
@@ -448,6 +472,36 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
 
+    // Arrow keys move the caret (never insert; they live in the function-key range).
+    // Modifiers follow notes-app semantics: Cmd = line/document ends, Option = word/paragraph.
+    BOOL isArrow = (k == NSLeftArrowFunctionKey || k == NSRightArrowFunctionKey ||
+                    k == NSUpArrowFunctionKey   || k == NSDownArrowFunctionKey);
+    if (isArrow) {
+        _editSelAll = NO;
+        BOOL cmd = (m & NSEventModifierFlagCommand) != 0;
+        BOOL opt = (m & NSEventModifierFlagOption)  != 0;
+        if (k == NSLeftArrowFunctionKey) {
+            if (cmd)      _editCaret = [self lineStartFor:_editCaret];
+            else if (opt) _editCaret = [self wordLeftFrom:_editCaret];
+            else if (_editCaret > 0) _editCaret--;
+        } else if (k == NSRightArrowFunctionKey) {
+            if (cmd)      _editCaret = [self lineEndFor:_editCaret];
+            else if (opt) _editCaret = [self wordRightFrom:_editCaret];
+            else if (_editCaret < _editText.length) _editCaret++;
+        } else if (k == NSUpArrowFunctionKey) {
+            if (cmd)      _editCaret = 0;                                  // document start
+            else if (opt) { NSUInteger s = [self lineStartFor:_editCaret]; // paragraph start (then previous)
+                            _editCaret = (s == _editCaret && s > 0) ? [self lineStartFor:s - 1] : s; }
+            else { [self moveCaretLine:-1]; return YES; }
+        } else { // down
+            if (cmd)      _editCaret = _editText.length;                   // document end
+            else if (opt) { NSUInteger en = [self lineEndFor:_editCaret];  // paragraph end (then next)
+                            _editCaret = (en == _editCaret && en < _editText.length) ? [self lineEndFor:en + 1] : en; }
+            else { [self moveCaretLine:1]; return YES; }
+        }
+        [self.host refreshAll];
+        return YES;
+    }
     if (m & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
         if (lk == 'a') { _editSelAll = YES; [self.host refreshAll]; return YES; }       // select all
         if (lk == 'c') { [pb clearContents]; [pb setString:_editText forType:NSPasteboardTypeString]; return YES; }
@@ -456,11 +510,6 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         if (lk == 'v') { NSString *s = [pb stringForType:NSPasteboardTypeString]; if (s.length) [self insertEditString:s]; return YES; }
         return YES;   // swallow other modified keys while editing
     }
-    // Arrow keys move the caret; never insert (they live in the function-key range).
-    if (k == NSLeftArrowFunctionKey)  { _editSelAll = NO; if (_editCaret > 0) _editCaret--; [self.host refreshAll]; return YES; }
-    if (k == NSRightArrowFunctionKey) { _editSelAll = NO; if (_editCaret < _editText.length) _editCaret++; [self.host refreshAll]; return YES; }
-    if (k == NSUpArrowFunctionKey)    { [self moveCaretLine:-1]; return YES; }
-    if (k == NSDownArrowFunctionKey)  { [self moveCaretLine:1];  return YES; }
     if (k >= 0xF700 && k <= 0xF8FF) return YES;   // ignore other function keys (F-keys, etc.)
     if (k == 0x1B) { [self commitTextEditing]; return YES; }                            // esc commits
     if (k == 0x0D || k == 0x03) { [self insertEditString:@"\n"]; return YES; }          // return = newline
