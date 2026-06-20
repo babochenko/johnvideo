@@ -323,8 +323,8 @@ static const CGFloat kNotifH = 30;
 
 - (void)seekTo:(double)t {
     if (t < 0) t = 0;
-    if (_transportPlaying) [self stopTransport];
     _playhead = t;
+    if (_transportPlaying) { [self startClockFrom:t]; [_audio playFrom:t]; }   // scrubbing keeps play/pause state
     [self refreshAll];
 }
 
@@ -661,6 +661,7 @@ static const CGFloat kNotifH = 30;
             [self stopTransport];
             self->_playhead = dur;   // hold at the last frame; pressing play restarts from 0
         }
+        [self->_timelineView followPlayhead];   // scroll the timeline to track the playhead
         [self refreshAll];
     }];
 }

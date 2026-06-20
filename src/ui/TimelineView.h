@@ -8,4 +8,6 @@
 
 @interface TimelineView : NSView
 @property(nonatomic, weak) id<EditorHost> host;
+// Pan the view to keep the playhead on screen (used during playback).
+- (void)followPlayhead;
 @end

@@ -301,7 +301,6 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         if (e.modifierFlags & NSEventModifierFlagShift)   { [self.host extendSelectionTo:c]; _drag = DRAG_NONE; return; }
         [self.host recordUndo];
         if (![self.host isClipSelected:c]) [self.host selectTrack:t clip:c];   // keep multi-selection if part of it
-        [self.host seekTo:[self timeForX:p.x]];   // move the playhead to the clicked position
         NSRect r = [self rectForClip:c onTrack:idx];
         if (p.x > NSMaxX(r) - 8) {            // right edge => trim end
             _drag = DRAG_TRIM;
@@ -310,6 +309,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         } else {
             _drag = DRAG_MOVE;
             _grabOffset = [self timeForX:p.x] - c->start_time;
+            [self.host seekTo:[self timeForX:p.x]];   // move the playhead to the clicked position (not when trimming an edge)
         }
         _dragTrack = t; _dragClip = c;
         [self setNeedsDisplay:YES];
@@ -450,6 +450,22 @@ static int cmp_double(const void *a, const void *b) {
     if (ny < 0) ny = 0;
     tl->scroll_y = ny;
     [self setNeedsDisplay:YES];
+}
+
+// Keep the playhead within the visible time window; pages when it runs off an
+// edge so playback can scroll past the original viewport.
+- (void)followPlayhead {
+    jv_timeline *tl = [self.host timeline];
+    if (!tl) return;
+    double span = (self.bounds.size.width - kHeaderWidth) / self.pps;
+    if (span <= 0) return;
+    double ph = [self.host playhead];
+    if (ph >= tl->scroll_x + span) {          // off the right edge -> page so it's at the left
+        tl->scroll_x = ph;
+    } else if (ph < tl->scroll_x) {           // off the left edge -> bring it back into view
+        tl->scroll_x = ph;
+    }
+    if (tl->scroll_x < 0) tl->scroll_x = 0;
 }
 
 - (CGFloat)contentHeight {
