@@ -11,6 +11,8 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     double     _grabOffset;   // seconds between clip start and grab point
     size_t     _trackDragIdx; // track being reordered
     size_t     _markIdx;      // marker being dragged
+    BOOL       _didDrag;      // a move drag actually happened (vs a bare click)
+    double     _clickSeek;    // playhead time to apply on a bare clip click
 }
 // Scroll is stored on the timeline model (so it persists with the project).
 - (double)sx { return [self.host timeline]->scroll_x; }
@@ -309,7 +311,8 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         } else {
             _drag = DRAG_MOVE;
             _grabOffset = [self timeForX:p.x] - c->start_time;
-            [self.host seekTo:[self timeForX:p.x]];   // move the playhead to the clicked position (not when trimming an edge)
+            _didDrag = NO;
+            _clickSeek = [self timeForX:p.x];   // applied on mouseUp only if it stays a click (a drag cancels it)
         }
         _dragTrack = t; _dragClip = c;
         [self setNeedsDisplay:YES];
@@ -371,6 +374,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     if (_drag == DRAG_SCRUB) {
         [self.host seekTo:[self snapTime:t]];
     } else if (_drag == DRAG_MOVE && _dragClip) {
+        _didDrag = YES;   // a real move -> don't seek the redline on mouseUp
         // Move all selected clips together to the track under the pointer.
         size_t ti = [self trackIndexForY:p.y];
         if (ti != SIZE_MAX) {
@@ -424,6 +428,8 @@ static int cmp_double(const void *a, const void *b) {
         jv_timeline *tl = [self.host timeline];
         qsort(tl->markers, tl->marker_count, sizeof(double), cmp_double);   // keep sorted
         [self.host refreshAll];
+    } else if (_drag == DRAG_MOVE && !_didDrag) {
+        [self.host seekTo:_clickSeek];   // a bare click (no drag) moves the redline to the click point
     }
     _drag = DRAG_NONE; _dragClip = NULL; _dragTrack = NULL;
     [[NSCursor arrowCursor] set];
