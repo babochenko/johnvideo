@@ -309,8 +309,8 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
         } else {
             _drag = DRAG_MOVE;
             _grabOffset = [self timeForX:p.x] - c->start_time;
+            [self.host seekTo:[self timeForX:p.x]];   // move the playhead to the clicked position (not when trimming an edge)
         }
-        // Clicking/dragging a clip never moves the redline (only scrubbing lanes/ruler does).
         _dragTrack = t; _dragClip = c;
         [self setNeedsDisplay:YES];
     } else {
