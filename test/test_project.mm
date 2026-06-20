@@ -28,6 +28,15 @@ int main(void) {
         for (int i = 0; i < w*h; i++) { ic->u.image.rgba[i*4]=200; ic->u.image.rgba[i*4+1]=50; ic->u.image.rgba[i*4+2]=50; ic->u.image.rgba[i*4+3]=255; }
         ic->u.image.width = w; ic->u.image.height = h; ic->u.image.scale = 0.6f; ic->u.image.cx = 0.3f; ic->u.image.cy = 0.3f;
 
+        // Audio clip with a non-unity gain + synthetic PCM (saved as a WAV sidecar).
+        jv_track *mt = &tl->tracks[1];
+        jv_clip *ac = jv_track_add_clip(mt, JV_CLIP_AUDIO, 0.0, 1.0);
+        int sr = 48000; size_t fr = sr;
+        ac->u.audio.pcm = (float *)malloc(sizeof(float) * fr * 2);
+        for (size_t i = 0; i < fr * 2; i++) ac->u.audio.pcm[i] = 0.25f;
+        ac->u.audio.frames = fr; ac->u.audio.sample_rate = sr; ac->u.audio.channels = 2;
+        ac->u.audio.gain = 0.35f;
+
         NSString *path = @"/tmp/jv_test.jvp";
         CHECK(jv_project_save(tl, path), "save succeeds");
         jv_timeline_destroy(tl);
@@ -60,6 +69,13 @@ int main(void) {
                 }
             }
             CHECK(sawText && sawImage, "both clip types present");
+            // Audio gain round-trips on the Music track.
+            jv_track *mt2 = &r->tracks[1];
+            CHECK(mt2->clip_count == 1 && mt2->clips[0].type == JV_CLIP_AUDIO, "audio clip restored");
+            if (mt2->clip_count == 1) {
+                CHECK(fabs(mt2->clips[0].u.audio.gain - 0.35f) < 1e-4, "audio gain restored");
+                CHECK(mt2->clips[0].u.audio.pcm != NULL, "audio sidecar reloaded");
+            }
             jv_timeline_destroy(r);
         }
 

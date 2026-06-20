@@ -425,6 +425,29 @@ static void test_audio_volume_gain(void) {
     CHECK_EQ([app timeline]->tracks[2].clips[0].u.audio.gain, 4.0, "undo restores prior gain");
 }
 
+static void test_audio_gain_affects_mix(void) {
+    CASE("gain scales the mixed/exported audio");
+    // The exporter mixes via jv_mix_audio, so this is the render path too.
+    AppDelegate *app = bootWithClip(0, 1, NULL);
+    jv_timeline *tl = [app timeline];
+    jv_clip *ac = jv_track_add_clip(&tl->tracks[2], JV_CLIP_AUDIO, 0, 1);
+    int sr = 48000; size_t frames = sr;
+    float *pcm = (float *)malloc(sizeof(float) * frames * 2);
+    for (size_t i = 0; i < frames * 2; i++) pcm[i] = 0.4f;   // constant tone
+    ac->u.audio.pcm = pcm; ac->u.audio.frames = frames;
+    ac->u.audio.sample_rate = sr; ac->u.audio.channels = 2;
+
+    float out[8] = {0};
+    ac->u.audio.gain = 1.0f;
+    jv_mix_audio(tl, 0.0, sr, 4, out);
+    float full = out[0];
+    memset(out, 0, sizeof out);
+    [H(app) setGain:0.5f forClip:ac];
+    jv_mix_audio(tl, 0.0, sr, 4, out);
+    CHECK(fabs(out[0] - full * 0.5f) < 1e-4, "half gain halves the mixed sample");
+    CHECK(fabs(full - 0.4f) < 1e-4, "unity gain passes the sample through");
+}
+
 // ---- In-place text editing (notes-app caret semantics) ----
 // Boot, add a text clip (begins editing with "Text" selected), then replace it
 // with a known multi-line/multi-word string. Caret ends at the document end.
@@ -884,6 +907,7 @@ int main(void) {
         test_keyboard_zoom_anchors_playhead();
         test_pointer_zoom_anchors_under_cursor();
         test_audio_volume_gain();
+        test_audio_gain_affects_mix();
 
         // Project persistence
         test_reopen_last_project();

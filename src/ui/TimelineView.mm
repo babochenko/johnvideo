@@ -148,12 +148,13 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     NSBezierPath *wf = [NSBezierPath bezierPath];
     wf.lineWidth = 1.0;
     size_t per = a->frames / (size_t)cols; if (per == 0) per = 1;
+    float gain = a->gain;   // draw the waveform at its post-gain amplitude
     for (int x = 0; x < cols; x++) {
         size_t start = (size_t)x * per;
         float peak = 0;
         for (size_t k = 0; k < per && start + k < a->frames; k += 1) {
             float l = a->pcm[(start + k) * 2];
-            float v = l < 0 ? -l : l;
+            float v = (l < 0 ? -l : l) * gain;
             if (v > peak) peak = v;
         }
         if (peak > 1) peak = 1;
