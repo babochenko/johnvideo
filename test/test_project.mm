@@ -1,14 +1,20 @@
-// Round-trip test: build a timeline, save .jvp, load it back, verify.
+// Round-trip test: build a timeline, save .jvp, load it back, verify fields.
 #import <Cocoa/Cocoa.h>
 #import "Project.h"
 #include "timeline.h"
 #include <stdio.h>
+#include <string.h>
+
+static int g_fail = 0;
+#define CHECK(cond, msg) do { if (!(cond)) { g_fail++; fprintf(stderr, "  FAIL %s\n", msg); } } while (0)
 
 int main(void) {
     @autoreleasepool {
         jv_timeline *tl = jv_timeline_create(1280, 720, 25.0);
         jv_track *v = jv_timeline_add_track(tl, JV_TRACK_VISUAL, "Video 1");
         jv_timeline_add_track(tl, JV_TRACK_AUDIO, "Music");
+        tl->pixels_per_second = 42.0; tl->playhead = 1.5; tl->scroll_x = 2.0;
+        jv_timeline_add_marker(tl, 3.25);
 
         // Text clip.
         jv_clip *tc = jv_track_add_clip(v, JV_CLIP_TEXT, 1.0, 3.0);
@@ -23,24 +29,41 @@ int main(void) {
         ic->u.image.width = w; ic->u.image.height = h; ic->u.image.scale = 0.6f; ic->u.image.cx = 0.3f; ic->u.image.cy = 0.3f;
 
         NSString *path = @"/tmp/jv_test.jvp";
-        BOOL ok = jv_project_save(tl, path);
-        printf("save: %s\n", ok ? "ok" : "FAIL");
+        CHECK(jv_project_save(tl, path), "save succeeds");
         jv_timeline_destroy(tl);
 
         jv_timeline *r = jv_project_load(path);
-        if (!r) { printf("load FAIL\n"); return 1; }
-        printf("tracks=%zu (expect 2)\n", r->track_count);
-        printf("canvas=%dx%d @%.0f (expect 1280x720 @25)\n", r->width, r->height, r->fps);
-        jv_track *vt = &r->tracks[0];
-        printf("clips on track0=%zu (expect 2)\n", vt->clip_count);
-        for (size_t j = 0; j < vt->clip_count; j++) {
-            jv_clip *c = &vt->clips[j];
-            if (c->type == JV_CLIP_TEXT)
-                printf("text='%s' rot=%.2f rgba=%s\n", c->u.text.string, c->u.text.rotation, c->u.text.rgba?"yes":"no");
-            if (c->type == JV_CLIP_IMAGE)
-                printf("image scale=%.2f rgba=%s %dx%d\n", c->u.image.scale, c->u.image.rgba?"yes":"no", c->u.image.width, c->u.image.height);
+        CHECK(r != NULL, "load succeeds");
+        if (r) {
+            CHECK(r->track_count == 2, "two tracks restored");
+            CHECK(r->width == 1280 && r->height == 720, "canvas size restored");
+            CHECK(fabs(r->fps - 25.0) < 1e-6, "fps restored");
+            CHECK(fabs(r->pixels_per_second - 42.0) < 1e-6, "zoom restored");
+            CHECK(fabs(r->playhead - 1.5) < 1e-6, "playhead restored");
+            CHECK(fabs(r->scroll_x - 2.0) < 1e-6, "scroll restored");
+            CHECK(r->marker_count == 1 && fabs(r->markers[0] - 3.25) < 1e-6, "marker restored");
+            jv_track *vt = &r->tracks[0];
+            CHECK(vt->clip_count == 2, "two clips on track 0");
+            int sawText = 0, sawImage = 0;
+            for (size_t j = 0; j < vt->clip_count; j++) {
+                jv_clip *c = &vt->clips[j];
+                if (c->type == JV_CLIP_TEXT) {
+                    sawText = 1;
+                    CHECK(strcmp(c->u.text.string, "Hello World") == 0, "text string restored");
+                    CHECK(fabs(c->u.text.rotation - 0.3f) < 1e-4, "text rotation restored");
+                    CHECK(c->u.text.rgba != NULL, "text re-rasterized on load");
+                }
+                if (c->type == JV_CLIP_IMAGE) {
+                    sawImage = 1;
+                    CHECK(fabs(c->u.image.scale - 0.6f) < 1e-4, "image scale restored");
+                    CHECK(c->u.image.rgba != NULL, "image sidecar reloaded");
+                }
+            }
+            CHECK(sawText && sawImage, "both clip types present");
+            jv_timeline_destroy(r);
         }
-        jv_timeline_destroy(r);
+
+        fprintf(stderr, "test_project: %s\n", g_fail ? "FAILED" : "ok");
+        return g_fail ? 1 : 0;
     }
-    return 0;
 }

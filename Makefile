@@ -46,8 +46,31 @@ ICON_SRC  := icon.png
 ICNS      := $(BUILD_DIR)/AppIcon.icns
 ICON_SIZES := 16 32 128 256 512
 
-.PHONY: all run run-direct clean install
+.PHONY: all run run-direct clean install test test-ui test-export test-project
 all: $(APP_DIR)
+
+# ---- Tests ---------------------------------------------------------------
+# `make test` runs every suite; the test-* targets run one each. Each test file
+# owns its own main(), so we link all app objects EXCEPT main.o.
+NONMAIN_OBJS := $(filter-out $(BUILD_DIR)/obj/ui/main.o,$(OBJS))
+
+test: test-export test-project test-ui
+	@echo "all test suites passed"
+
+# Headless UI behaviour suite: synthesizes NSEvents into real views.
+test-ui: $(OBJS)
+	$(OBJCXX) $(OBJCXXFLAGS) test/test_ui.mm $(NONMAIN_OBJS) $(LDFLAGS) -o $(BUILD_DIR)/test_ui
+	$(BUILD_DIR)/test_ui
+
+# Engine -> MP4 (compositor + mixer + encode/mux). Pure C + FFmpeg.
+test-export: $(C_OBJS)
+	$(CC) $(CFLAGS) test/test_export.c $(C_OBJS) $(FFMPEG_LDFLAGS) -o $(BUILD_DIR)/test_export
+	$(BUILD_DIR)/test_export
+
+# .jvp save/load round-trip (Project.mm + Media.mm + engine).
+test-project: $(OBJS)
+	$(OBJCXX) $(OBJCXXFLAGS) test/test_project.mm $(NONMAIN_OBJS) $(LDFLAGS) -o $(BUILD_DIR)/test_project
+	$(BUILD_DIR)/test_project
 
 # App icon: build a multi-size .icns from icon.png (only when it changes).
 $(ICNS): $(ICON_SRC)

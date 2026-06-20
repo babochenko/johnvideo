@@ -258,12 +258,38 @@ All tracked user requests are implemented; the machine-readable list with per-it
 
 ## Tests (headless)
 
+> **Policy: every change must be tested.** Any behaviour change ships with a
+> test that covers it — extend `test/test_ui.mm` for UI/interaction behaviour
+> (synthesize the events, assert on the model), the engine/project suites for
+> non-UI logic. `make test` must pass before committing. If something genuinely
+> can't be unit-tested headlessly (live audio, mic, network, on-screen pixels),
+> say so explicitly in the change and note how it was verified instead.
+
 ```sh
-# engine -> MP4 (compositor + mixer + encode/mux)
+make test          # run every suite (engine + project round-trip + UI)
+make test-ui       # UI behaviour suite (synthesizes events into real views)
+make test-export   # engine -> MP4 (compositor + mixer + encode/mux)
+make test-project  # .jvp save/load round-trip
+```
+
+Each suite is its own `test/*.{c,mm}` with its own `main()`; the Makefile links
+every app object except `main.o`. `make test` is the gate — every suite returns
+a non-zero exit on failure.
+
+### Manual probe builds (orientation)
+
+```sh
+# engine -> MP4 (compositor + mixer + encode/mux) — same as `make test-export`
 clang test/test_export.c build/obj/engine/*.o $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale libswresample) -o build/test_export
 
 # orientation probes and .jvp round-trip are .mm; link Cocoa + Project.mm/Media.mm as needed
 ```
+
+**UI behaviour tests** (`test/test_ui.mm`, run with `make test-ui`) boot a real `AppDelegate` (the real `EditorHost`) with real `TimelineView`/`PreviewView` in an offscreen window, then **synthesize `NSEvent`s** (mouse, keyboard, scroll-wheel via `CGEvent`) and assert on the resulting model/transport state. This exercises the genuine `mouseDown/Dragged/Up` and `keyDown` state machines headlessly — no GUI session needed. Test-only hooks live in `AppDelegate+Test.h` / `PreviewView+Test.h` (small categories that expose private state + an offscreen boot; not compiled into the app's `main`).
+
+Covered (104 assertions): scrub/seek and redline play-state (incl. scrub-while-playing), click-vs-drag, both edge trims, clip move across tracks, snapping (scrub-to-edge, move-to-neighbour), selection (single / Cmd / Shift / Cmd+A / click-empty deselect / group nudge), keyboard transport & navigation (Space, arrows, h/l, j/k, Cmd+h/l, Cmd/Ctrl arrows, t, m, b, Delete), markers (add/drag/delete/jump), blade (arm/cut/disarm), zoom (Ctrl +/−), scroll panning, track add/remove/reorder, playhead-follow paging, **project save + reopen-on-launch**, in-place text editing (typing, select-all, backspace, newline, Esc-commit, Cmd+A/X/V, double-click-to-edit, and the notes-app caret nav: plain / Cmd / Option + arrows), and canvas move / resize / rotate (90° snap) / empty-click deselect.
+
+**Deliberately *not* unit-tested** (each needs hardware, network, a real render target, or a GUI session — verify on device): live `AVAudioEngine` output, mic/voiceover capture, http(s) image-drop fetches, drag-and-drop from external apps, and actual on-screen pixel rendering (the engine compositor itself is covered by `test-export`; orientation by the probes below). Pinch-zoom uses the same code path as Ctrl +/− and scroll-zoom (`magnification` can't be synthesized).
 
 `make` first to produce `build/obj/engine/*.o`. The orientation probes (`test_orient.mm`, `test_display.mm`) document why the preview is non-flipped with top-down buffers. Pattern for ad-hoc tests: write a small `.mm` that includes `Project.h`/`timeline.h`, compile it linking `src/ui/Project.mm src/ui/Media.mm build/obj/engine/timeline.o build/obj/engine/decoder.o` + Cocoa/ImageIO/CoreText/CoreGraphics + the ffmpeg libs.
 
