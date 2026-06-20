@@ -136,7 +136,9 @@ static const CGFloat kNotifH = 30;
 }
 
 // ---- Setup ----
-- (void)applicationDidFinishLaunching:(NSNotification *)note {
+// Build the data model + audio + history state. Split out from launch so tests
+// can boot the coordinator headlessly without the window/toolbar chrome.
+- (void)setupModel {
     _timeline = jv_timeline_create(1920, 1080, 30.0);
     jv_timeline_add_track(_timeline, JV_TRACK_VISUAL, "Video 1");
     jv_timeline_add_track(_timeline, JV_TRACK_VISUAL, "Video 2");
@@ -150,6 +152,10 @@ static const CGFloat kNotifH = 30;
     _redo = [NSMutableArray array];
     _notifications = [NSMutableArray array];
     _focusTrack = -1;
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
+    [self setupModel];
 
     NSRect frame = NSMakeRect(0, 0, 1000, 700);
     _window = [[NSWindow alloc]
@@ -246,9 +252,15 @@ static const CGFloat kNotifH = 30;
     [_window makeFirstResponder:_timelineView];
     [NSApp activateIgnoringOtherApps:YES];
 
-    // Reopen the project that was open last time, if its file still exists.
+    [self reopenLastProject];
+}
+
+// Reopen the project open last time, if its file still exists. Returns YES if a
+// project was loaded. Split out from launch so it's testable.
+- (BOOL)reopenLastProject {
     NSString *last = [[NSUserDefaults standardUserDefaults] stringForKey:kLastProjectKey];
-    if (last && [[NSFileManager defaultManager] fileExistsAtPath:last]) [self loadProjectAtPath:last];
+    if (last && [[NSFileManager defaultManager] fileExistsAtPath:last]) return [self loadProjectAtPath:last];
+    return NO;
 }
 
 - (NSButton *)barButton:(NSString *)title x:(CGFloat *)x action:(SEL)sel inBar:(NSView *)bar {
@@ -1142,4 +1154,33 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     });
 }
 
+@end
+
+// ---- Test-only hooks (see AppDelegate+Test.h) ----
+#import "AppDelegate+Test.h"
+
+@implementation AppDelegate (Test)
+- (void)bootForTestWithSize:(NSSize)size {
+    [self setupModel];
+    NSRect r = NSMakeRect(0, 0, size.width, size.height);
+    _window = [[NSWindow alloc] initWithContentRect:r
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    NSView *content = [[NSView alloc] initWithFrame:r];
+    _preview = [[PreviewView alloc] initWithFrame:r];
+    _preview.host = self;
+    _timelineView = [[TimelineView alloc] initWithFrame:r];
+    _timelineView.host = self;
+    [content addSubview:_preview];
+    [content addSubview:_timelineView];   // timeline on top for hit-testing
+    _window.contentView = content;
+}
+- (TimelineView *)tlView { return _timelineView; }
+- (PreviewView *)pvView { return _preview; }
+- (BOOL)isPlaying { return _transportPlaying; }
+- (void)forcePlay {
+    _transportPlaying = YES;
+    [self startClockFrom:_playhead];   // no tick timer / audio needed for tests
+}
+- (double)pps { return _pps; }
+- (NSString *)projectPath { return _projectPath; }
 @end

@@ -639,3 +639,14 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 }
 
 @end
+
+// ---- Test-only introspection (see PreviewView+Test.h) ----
+#import "PreviewView+Test.h"
+
+@implementation PreviewView (Test)
+- (BOOL)isEditing { return _editing; }
+- (NSString *)editText { return _editText; }
+- (NSUInteger)editCaret { return _editCaret; }
+- (BOOL)editSelAll { return _editSelAll; }
+- (void)layoutForTest { _videoRect = [self fitRect]; }
+@end
