@@ -187,8 +187,9 @@ Inserted **image and text clips are 1 s** long. Images (paste **and** Import) an
 - **Move** a clip by dragging; **trim** by dragging either edge (left edge trims into the source). All are **sticky** — they snap to the playhead and to neighbouring clips' edges. A **grabbing cursor** shows while dragging.
 - **Move between tracks** by dragging a clip vertically onto another same-kind track (group-moves all selected).
 - **Reorder tracks** by dragging a track header up/down (video stays above audio).
-- **Zoom**: pinch, or Option/Cmd-scroll, or Ctrl +/-. **Scroll**: horizontal pans time, vertical moves the track list. Zoom + scroll + playhead are saved in the project.
-- **Right-click**: on a clip → Delete; on empty lane → Add Text Here; on the ruler → Add/Delete Marker; on a track header → Add Video/Audio Track, **Rename Track…**, Delete This Track (**with confirmation** warning that media disappears).
+- **Zoom**: pinch, or Option/Cmd-scroll, or Ctrl +/-. Zoom is **anchored around the cursor** — pinch/scroll keep the time under the mouse pointer fixed; Ctrl +/- keep the playhead fixed. **Scroll**: horizontal pans time, vertical moves the track list. Zoom + scroll + playhead are saved in the project.
+- **Right-click**: on a clip → Delete (audio clips also get a **Volume** slider, 0–400%, live); on empty lane → Add Text Here; on the ruler → Add/Delete Marker; on a track header → Add Video/Audio Track, **Rename Track…**, Delete This Track (**with confirmation** warning that media disappears).
+- **Audio volume**: every audio clip carries a per-clip `gain`; right-click it for a 0–400% volume slider (clamped, undoable, applied live by the mixer). The current level shows as a `NN%` badge on the clip.
 - **Floating toolbar**: separate rounded Liquid Glass capsule buttons overlay the bottom of the timeline (no reserved space, not movable). The orange **Blade** chip appears to the left only while the blade tool is armed.
 
 ## Canvas (preview) interactions

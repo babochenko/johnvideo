@@ -42,6 +42,9 @@ static const CGFloat kRulerHeight = 18.0;
 - (void)shiftSelectionExcept:(jv_clip *)c by:(double)delta;  // horizontal move-together
 - (void)shiftSelectionTracksBy:(int)delta;                   // vertical move-together
 
+// Set an audio clip's playback gain (linear; 0 = silent, 1 = unity). Clamped.
+- (void)setGain:(float)gain forClip:(jv_clip *)c;
+
 // Move the selected object(s) along the timeline (cmd+h/l).
 - (void)nudgeSelectedBy:(double)seconds;
 // Jump the playhead through {0, markers..., end} (cmd + arrows).

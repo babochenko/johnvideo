@@ -13,6 +13,8 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     size_t     _markIdx;      // marker being dragged
     BOOL       _didDrag;      // a move drag actually happened (vs a bare click)
     double     _clickSeek;    // playhead time to apply on a bare clip click
+    jv_clip   *_gainClip;     // audio clip bound to the right-click volume slider
+    NSTextField *_gainLabel;  // live "NN%" readout next to that slider
 }
 // Scroll is stored on the timeline model (so it persists with the project).
 - (double)sx { return [self.host timeline]->scroll_x; }
@@ -233,6 +235,14 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
             [bp fill];
             if (c->type == JV_CLIP_AUDIO && c->u.audio.pcm)
                 [self drawWaveformForClip:c inRect:inner];
+            // Volume badge on audio clips (right-click to change).
+            if (c->type == JV_CLIP_AUDIO && inner.size.width > 30) {
+                NSString *vol = [self gainPercentString:c->u.audio.gain];
+                NSDictionary *va = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightSemibold],
+                                      NSForegroundColorAttributeName: [NSColor whiteColor] };
+                NSSize vs = [vol sizeWithAttributes:va];
+                [vol drawAtPoint:NSMakePoint(NSMaxX(inner) - vs.width - 4, NSMaxY(inner) - vs.height - 2) withAttributes:va];
+            }
             if ([self.host isClipSelected:c]) {
                 [[NSColor whiteColor] setStroke];
                 [bp setLineWidth:2];
@@ -537,6 +547,11 @@ static int cmp_double(const void *a, const void *b) {
     if (c) {
         [self.host selectTrack:t clip:c];
         [self setNeedsDisplay:YES];
+        if (c->type == JV_CLIP_AUDIO) {        // volume slider for audio clips
+            [menu addItemWithTitle:@"Volume" action:NULL keyEquivalent:@""];
+            [menu addItem:[self volumeMenuItemForClip:c]];
+            [menu addItem:[NSMenuItem separatorItem]];
+        }
         NSMenuItem *del = [menu addItemWithTitle:@"Delete Clip" action:@selector(deleteSelected) keyEquivalent:@""];
         del.target = self;
     } else {
@@ -545,6 +560,31 @@ static int cmp_double(const void *a, const void *b) {
         it.representedObject = [NSValue valueWithPoint:p];
     }
     [NSMenu popUpContextMenu:menu withEvent:e forView:self];
+}
+
+// A menu item hosting a 0..400% volume slider bound to an audio clip's gain,
+// with a live percentage readout. Dragging updates the clip in real time.
+- (NSMenuItem *)volumeMenuItemForClip:(jv_clip *)c {
+    _gainClip = c;
+    NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 30)];
+    NSSlider *s = [NSSlider sliderWithValue:c->u.audio.gain minValue:0.0 maxValue:4.0
+                                     target:self action:@selector(volumeSliderChanged:)];
+    s.frame = NSMakeRect(14, 4, 150, 22);
+    s.continuous = YES;
+    _gainLabel = [NSTextField labelWithString:[self gainPercentString:c->u.audio.gain]];
+    _gainLabel.frame = NSMakeRect(170, 6, 46, 18);
+    _gainLabel.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    [box addSubview:s];
+    [box addSubview:_gainLabel];
+    NSMenuItem *item = [[NSMenuItem alloc] init];
+    item.view = box;
+    return item;
+}
+- (NSString *)gainPercentString:(float)g { return [NSString stringWithFormat:@"%d%%", (int)lround(g * 100)]; }
+- (void)volumeSliderChanged:(NSSlider *)s {
+    if (!_gainClip) return;
+    [self.host setGain:(float)s.doubleValue forClip:_gainClip];
+    _gainLabel.stringValue = [self gainPercentString:(float)s.doubleValue];
 }
 
 - (void)addVideoTrack { [self.host addTrackOfKind:JV_TRACK_VISUAL]; }

@@ -418,6 +418,16 @@ static const CGFloat kNotifH = 30;
     [self refreshAll];
 }
 
+- (void)setGain:(float)gain forClip:(jv_clip *)c {
+    if (!c || c->type != JV_CLIP_AUDIO) return;
+    if (gain < 0) gain = 0;
+    if (gain > 4) gain = 4;            // up to +12 dB
+    if (c->u.audio.gain == gain) return;
+    [self recordUndo];
+    c->u.audio.gain = gain;
+    [self refreshAll];
+}
+
 // Select every clip on c's track between the current primary selection and c.
 - (void)extendSelectionTo:(jv_clip *)c {
     if (!c) return;

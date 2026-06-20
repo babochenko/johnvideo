@@ -406,6 +406,25 @@ static void test_pointer_zoom_anchors_under_cursor(void) {
     CHECK_EQ(tAfter, tUnder, "time under the anchor x preserved");
 }
 
+// ---- Audio clip volume (gain) ----
+static void test_audio_volume_gain(void) {
+    CASE("audio clip volume: set, clamp, audio-only, undo");
+    AppDelegate *app = bootWithClip(0, 1, NULL);
+    jv_timeline *tl = [app timeline];
+    jv_clip *img = &tl->tracks[0].clips[0];                              // an image clip
+    jv_clip *ac = jv_track_add_clip(&tl->tracks[2], JV_CLIP_AUDIO, 0, 3); // an audio clip (track 2 = audio)
+    ac->u.audio.gain = 1.0f;
+    [H(app) setGain:0.5f forClip:ac];
+    CHECK_EQ(ac->u.audio.gain, 0.5, "gain set to 0.5");
+    [H(app) setGain:10.0f forClip:ac];
+    CHECK_EQ(ac->u.audio.gain, 4.0, "gain clamps to 4.0 (max +12dB)");
+    [H(app) setGain:-2.0f forClip:ac];
+    CHECK_EQ(ac->u.audio.gain, 0.0, "gain clamps to 0 (silent)");
+    [H(app) setGain:0.8f forClip:img];   // non-audio clip: ignored, no crash
+    [H(app) performUndo];                // undo the last gain change (0 -> 4.0)
+    CHECK_EQ([app timeline]->tracks[2].clips[0].u.audio.gain, 4.0, "undo restores prior gain");
+}
+
 // ---- In-place text editing (notes-app caret semantics) ----
 // Boot, add a text clip (begins editing with "Text" selected), then replace it
 // with a known multi-line/multi-word string. Caret ends at the document end.
@@ -864,6 +883,7 @@ int main(void) {
         test_group_nudge_together();
         test_keyboard_zoom_anchors_playhead();
         test_pointer_zoom_anchors_under_cursor();
+        test_audio_volume_gain();
 
         // Project persistence
         test_reopen_last_project();
