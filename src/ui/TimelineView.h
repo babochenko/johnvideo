@@ -10,4 +10,8 @@
 @property(nonatomic, weak) id<EditorHost> host;
 // Pan the view to keep the playhead on screen (used during playback).
 - (void)followPlayhead;
+// Zoom keeping the time under `anchorX` pinned (mouse-anchored zoom).
+- (void)zoomToPps:(double)target anchorX:(CGFloat)anchorX;
+// Keyboard zoom, anchored at the playhead.
+- (void)zoomAroundPlayheadBy:(double)factor;
 @end

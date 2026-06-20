@@ -436,14 +436,33 @@ static int cmp_double(const void *a, const void *b) {
 }
 
 // ---- Zoom (see more/less time) ----
-- (void)magnifyWithEvent:(NSEvent *)e {
-    [self.host setPixelsPerSecond:[self.host pixelsPerSecond] * (1.0 + e.magnification)];
+// Zoom to `target` pps while keeping the timeline time currently under `anchorX`
+// pinned to that x — i.e. zoom around the anchor point rather than the left edge.
+- (void)zoomToPps:(double)target anchorX:(CGFloat)anchorX {
+    CGFloat maxX = NSMaxX(self.bounds);
+    if (anchorX < kHeaderWidth) anchorX = kHeaderWidth;   // keep the anchor in the lane area
+    if (anchorX > maxX)         anchorX = maxX;
+    double t = [self timeForX:anchorX];        // time under the anchor before zooming
+    [self.host setPixelsPerSecond:target];      // clamps pps
+    double pps = self.pps;
+    jv_timeline *tl = [self.host timeline];
+    double sx = t - (anchorX - kHeaderWidth) / pps;
+    tl->scroll_x = sx < 0 ? 0 : sx;
     [self setNeedsDisplay:YES];
+}
+// Keyboard zoom anchors at the playhead (the "cursor").
+- (void)zoomAroundPlayheadBy:(double)factor {
+    [self zoomToPps:self.pps * factor anchorX:[self xForTime:[self.host playhead]]];
+}
+
+- (void)magnifyWithEvent:(NSEvent *)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    [self zoomToPps:self.pps * (1.0 + e.magnification) anchorX:p.x];   // around the pointer
 }
 - (void)scrollWheel:(NSEvent *)e {
     if (e.modifierFlags & (NSEventModifierFlagOption | NSEventModifierFlagCommand)) {
-        [self.host setPixelsPerSecond:[self.host pixelsPerSecond] * (1.0 + e.scrollingDeltaY * 0.01)];
-        [self setNeedsDisplay:YES];
+        NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+        [self zoomToPps:self.pps * (1.0 + e.scrollingDeltaY * 0.01) anchorX:p.x];   // around the pointer
         return;
     }
     // Horizontal scroll pans time; vertical scroll moves down the track list.

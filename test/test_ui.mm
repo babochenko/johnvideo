@@ -380,6 +380,32 @@ static void test_zoom_keys(void) {
     CHECK([app pps] < mid, "ctrl+- zooms out");
 }
 
+static void test_keyboard_zoom_anchors_playhead(void) {
+    CASE("ctrl+/- zoom keeps the playhead at the same screen x");
+    AppDelegate *app = bootWithClip(0, 30, NULL);
+    jv_timeline *tl = [app timeline];
+    TimelineView *tv = [app tlView];
+    [app seekTo:4.0];
+    double x0 = kHeaderWidth + (4.0 - tl->scroll_x) * [app pps];
+    key(tv, @"=", NSEventModifierFlagControl);
+    double x1 = kHeaderWidth + (4.0 - tl->scroll_x) * [app pps];
+    CHECK([app pps] > 80.0, "zoomed in");
+    CHECK_EQ(x1, x0, "playhead stayed at the same screen x");
+}
+
+static void test_pointer_zoom_anchors_under_cursor(void) {
+    CASE("mouse-anchored zoom keeps the time under the pointer fixed");
+    AppDelegate *app = bootWithClip(0, 60, NULL);
+    jv_timeline *tl = [app timeline];
+    TimelineView *tv = [app tlView];
+    tl->scroll_x = 5.0;
+    CGFloat anchorX = 600;
+    double tUnder = tl->scroll_x + (anchorX - kHeaderWidth) / [app pps];
+    [tv zoomToPps:[app pps] * 1.5 anchorX:anchorX];
+    double tAfter = tl->scroll_x + (anchorX - kHeaderWidth) / [app pps];
+    CHECK_EQ(tAfter, tUnder, "time under the anchor x preserved");
+}
+
 // ---- In-place text editing (notes-app caret semantics) ----
 // Boot, add a text clip (begins editing with "Text" selected), then replace it
 // with a known multi-line/multi-word string. Caret ends at the document end.
@@ -836,6 +862,8 @@ int main(void) {
         test_scroll_pans_time();
         test_blade_toggle_off();
         test_group_nudge_together();
+        test_keyboard_zoom_anchors_playhead();
+        test_pointer_zoom_anchors_under_cursor();
 
         // Project persistence
         test_reopen_last_project();

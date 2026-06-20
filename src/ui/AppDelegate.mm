@@ -813,7 +813,7 @@ static const CGFloat kNotifH = 30;
     [self refreshAll];
 }
 
-- (void)zoomBy:(double)factor { [self setPixelsPerSecond:_pps * factor]; }
+- (void)zoomBy:(double)factor { [_timelineView zoomAroundPlayheadBy:factor]; }   // anchored at the redline
 
 - (void)addTextAtPlayhead {
     [self addTextAtCanvasX:0.5f y:0.5f time:_playhead];
