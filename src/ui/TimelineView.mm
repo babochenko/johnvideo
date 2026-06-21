@@ -636,11 +636,13 @@ static int cmp_double(const void *a, const void *b) {
     NSEventModifierFlags m = e.modifierFlags;
     if (m & NSEventModifierFlagCommand) {            // Cmd-based shortcuts
         if (lk == 'a') { [self.host selectAllClips]; return; }        // select all clips
-        if (lk == 'h') { [self.host nudgeSelectedBy:-0.5]; return; }   // move object
-        if (lk == 'l') { [self.host nudgeSelectedBy:0.5];  return; }
         if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }
         if (k == NSRightArrowFunctionKey) { [self.host jumpStartMarksEnd:1];  return; }
-        return;
+        return;   // Cmd+H/Cmd+Opt+H are the system Hide items (handled by the menu)
+    }
+    if (m & NSEventModifierFlagOption) {             // Option + arrows = move the selected object(s)
+        if (k == NSLeftArrowFunctionKey)  { [self.host nudgeSelectedBy:-0.5]; return; }
+        if (k == NSRightArrowFunctionKey) { [self.host nudgeSelectedBy:0.5];  return; }
     }
     if (m & NSEventModifierFlagControl) {            // Ctrl-based shortcuts
         if (lk == 'z') { if (m & NSEventModifierFlagShift) [self.host performRedo]; else [self.host performUndo]; return; }

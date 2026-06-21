@@ -152,8 +152,9 @@ Inserted **image and text clips are 1 s** long. Images (paste **and** Import) an
 | ← / → | Move the playhead ∓ 0.5 s (does **not** pause playback — it keeps playing from the new spot) |
 | h / l | Select previous / next clip on the current track (wraps) |
 | j / k | Move focus down / up between tracks (wraps; **skips empty tracks**) |
-| Cmd + A | Select **all** clips on all tracks (then drag or Cmd+h/l to move them together) |
-| Cmd + h / l | Move the selected object(s) ∓ 0.5 s along the timeline |
+| Cmd + A | Select **all** clips on all tracks (then drag or Option+←/→ to move them together) |
+| Option + ← / → | Move the selected object(s) ∓ 0.5 s along the timeline |
+| Cmd + H , Cmd + Opt + H | Standard macOS **Hide** / Hide Others |
 | Cmd + ← / → | Jump the playhead through {start, markers…, end} (without pausing playback) |
 | Ctrl + ← / → , Ctrl + h / l | Jump the playhead to the previous / next marker |
 | m | Add a marker at the playhead |
@@ -288,7 +289,7 @@ clang test/test_export.c build/obj/engine/*.o $(pkg-config --cflags --libs libav
 
 **UI behaviour tests** (`test/test_ui.mm`, run with `make test-ui`) boot a real `AppDelegate` (the real `EditorHost`) with real `TimelineView`/`PreviewView` in an offscreen window, then **synthesize `NSEvent`s** (mouse, keyboard, scroll-wheel via `CGEvent`) and assert on the resulting model/transport state. This exercises the genuine `mouseDown/Dragged/Up` and `keyDown` state machines headlessly — no GUI session needed. Test-only hooks live in `AppDelegate+Test.h` / `PreviewView+Test.h` (small categories that expose private state + an offscreen boot; not compiled into the app's `main`).
 
-Covered (104 assertions): scrub/seek and redline play-state (incl. scrub-while-playing), click-vs-drag, both edge trims, clip move across tracks, snapping (scrub-to-edge, move-to-neighbour), selection (single / Cmd / Shift / Cmd+A / click-empty deselect / group nudge), keyboard transport & navigation (Space, arrows, h/l, j/k, Cmd+h/l, Cmd/Ctrl arrows, t, m, b, Delete), markers (add/drag/delete/jump), blade (arm/cut/disarm), zoom (Ctrl +/−), scroll panning, track add/remove/reorder, playhead-follow paging, **project save + reopen-on-launch**, in-place text editing (typing, select-all, backspace, newline, Esc-commit, Cmd+A/X/V, double-click-to-edit, and the notes-app caret nav: plain / Cmd / Option + arrows), and canvas move / resize / rotate (90° snap) / empty-click deselect.
+Covered (104 assertions): scrub/seek and redline play-state (incl. scrub-while-playing), click-vs-drag, both edge trims, clip move across tracks, snapping (scrub-to-edge, move-to-neighbour), selection (single / Cmd / Shift / Cmd+A / click-empty deselect / group nudge), keyboard transport & navigation (Space, arrows, h/l, j/k, Option+arrows to move clips, Cmd/Ctrl arrows, t, m, b, Delete), markers (add/drag/delete/jump), blade (arm/cut/disarm), zoom (Ctrl +/−), scroll panning, track add/remove/reorder, playhead-follow paging, **project save + reopen-on-launch**, in-place text editing (typing, select-all, backspace, newline, Esc-commit, Cmd+A/X/V, double-click-to-edit, and the notes-app caret nav: plain / Cmd / Option + arrows), and canvas move / resize / rotate (90° snap) / empty-click deselect.
 
 **Deliberately *not* unit-tested** (each needs hardware, network, a real render target, or a GUI session — verify on device): live `AVAudioEngine` output, mic/voiceover capture, http(s) image-drop fetches, drag-and-drop from external apps, and actual on-screen pixel rendering (the engine compositor itself is covered by `test-export`; orientation by the probes below). Pinch-zoom uses the same code path as Ctrl +/− and scroll-zoom (`magnification` can't be synthesized).
 

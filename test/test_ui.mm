@@ -296,15 +296,24 @@ static void test_hl_selects_adjacent_clip(void) {
     CHECK([app selectedClip] == a, "h moves to previous clip");
 }
 
-static void test_cmd_hl_moves_selected(void) {
-    CASE("cmd+h/l nudges the selected clip");
+static void test_option_arrows_move_selected(void) {
+    CASE("option+arrows nudge the selected clip");
     jv_clip *c; AppDelegate *app = bootWithClip(2.0, 1.0, &c);
     TimelineView *tv = [app tlView];
     click(tv, NSMakePoint(xForTime(2.5, [app pps]), yForTrack(0)), 0);
-    key(tv, @"l", NSEventModifierFlagCommand);
-    CHECK_EQ(c->start_time, 2.5, "cmd+l moves clip +0.5");
-    key(tv, @"h", NSEventModifierFlagCommand);
-    CHECK_EQ(c->start_time, 2.0, "cmd+h moves clip -0.5");
+    key(tv, RIGHT, NSEventModifierFlagOption);
+    CHECK_EQ(c->start_time, 2.5, "opt+right moves clip +0.5");
+    key(tv, LEFT, NSEventModifierFlagOption);
+    CHECK_EQ(c->start_time, 2.0, "opt+left moves clip -0.5");
+}
+
+static void test_cmd_h_not_captured(void) {
+    CASE("cmd+h is left for the system Hide (not eaten by the view)");
+    jv_clip *c; AppDelegate *app = bootWithClip(2.0, 1.0, &c);
+    TimelineView *tv = [app tlView];
+    click(tv, NSMakePoint(xForTime(2.5, [app pps]), yForTrack(0)), 0);
+    key(tv, @"h", NSEventModifierFlagCommand);   // must NOT nudge the clip anymore
+    CHECK_EQ(c->start_time, 2.0, "cmd+h does not move the clip");
 }
 
 static void test_t_adds_text_clip(void) {
@@ -605,7 +614,7 @@ static void test_undo_redo(void) {
     TimelineView *tv = [app tlView];
     jv_timeline *tl = [app timeline];
     click(tv, NSMakePoint(xForTime(1.5, [app pps]), yForTrack(0)), 0);   // select
-    key(tv, @"l", NSEventModifierFlagCommand);                          // move +0.5 (records undo)
+    key(tv, RIGHT, NSEventModifierFlagOption);                          // move +0.5 (records undo)
     CHECK_EQ(tl->tracks[0].clips[0].start_time, 1.5, "moved to 1.5");
     [H(app) performUndo];
     CHECK_EQ([app timeline]->tracks[0].clips[0].start_time, 1.0, "undo restores 1.0");
@@ -686,7 +695,7 @@ static void test_group_nudge_together(void) {
     double pps = [app pps], y = yForTrack(0);
     click(tv, NSMakePoint(xForTime(1.5, pps), y), 0);
     click(tv, NSMakePoint(xForTime(4.5, pps), y), NSEventModifierFlagCommand);
-    key(tv, @"l", NSEventModifierFlagCommand);
+    key(tv, RIGHT, NSEventModifierFlagOption);
     CHECK_EQ(a->start_time, 1.5, "first clip moved +0.5");
     CHECK_EQ(b->start_time, 4.5, "second clip moved +0.5 too");
 }
@@ -862,7 +871,8 @@ int main(void) {
         test_space_toggles_transport();
         test_arrows_nudge_playhead_keep_playing();
         test_hl_selects_adjacent_clip();
-        test_cmd_hl_moves_selected();
+        test_option_arrows_move_selected();
+        test_cmd_h_not_captured();
         test_t_adds_text_clip();
         test_delete_removes_selected_clip();
 

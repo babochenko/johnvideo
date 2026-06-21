@@ -15,6 +15,14 @@ int main(void) {
         NSMenuItem *appItem = [[NSMenuItem alloc] init];
         [menubar addItem:appItem];
         NSMenu *appMenu = [[NSMenu alloc] init];
+        // Standard Hide items (Cmd+H / Cmd+Opt+H). Menu key equivalents fire
+        // before keyDown:, so these reclaim Cmd+H from the views for the system.
+        [appMenu addItemWithTitle:@"Hide John Video" action:@selector(hide:) keyEquivalent:@"h"];
+        NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others"
+                                                    action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
+        hideOthers.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+        [appMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
+        [appMenu addItem:[NSMenuItem separatorItem]];
         [appMenu addItemWithTitle:@"Quit John Video"
                            action:@selector(terminate:)
                     keyEquivalent:@"q"];
