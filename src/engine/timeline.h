@@ -38,6 +38,10 @@ typedef struct {
     float          cx, cy;   // normalized center on the canvas
     float          scale;    // fraction of canvas height (aspect preserved)
     float          rotation; // radians, clockwise
+    // Non-destructive crop: the visible sub-rectangle of the source, normalized
+    // 0..1 (x,y = top-left, w,h = size). Default/zero is treated as full (the
+    // whole image). Reduces the displayed area without altering the bitmap.
+    float          crop_x, crop_y, crop_w, crop_h;
 } jv_image;
 
 typedef struct {

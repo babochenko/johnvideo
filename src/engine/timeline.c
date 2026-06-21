@@ -316,8 +316,11 @@ static void sample_bilinear(const unsigned char *src, int sw, int sh,
 // pixel back into the source (premultiplied source-over).
 static void blit_rgba(unsigned char *dst, int dw, int dh,
                       const unsigned char *src, int sw, int sh,
-                      float cx, float cy, float scale, float rot) {
+                      float cx, float cy, float scale, float rot,
+                      float crop_x, float crop_y, float crop_w, float crop_h) {
     if (!src || sw <= 0 || sh <= 0 || scale <= 0.f) return;
+    // Zero/invalid crop means "no crop" (full image).
+    if (crop_w <= 0.f || crop_h <= 0.f) { crop_x = 0; crop_y = 0; crop_w = 1; crop_h = 1; }
     float outh = scale * dh;
     float outw = outh * (float)sw / sh;
     if (outw < 1 || outh < 1) return;
@@ -326,6 +329,10 @@ static void blit_rgba(unsigned char *dst, int dw, int dh,
     float c = cosf(rot), s = sinf(rot);
     // Half-extent of the axis-aligned bounding box of the rotated rectangle.
     float hw = outw / 2, hh = outh / 2;
+    // Visible sub-rectangle in the clip's local frame (crop reduces the area
+    // drawn; the kept pixels stay where they were in the full footprint).
+    float lxmin = -hw + crop_x * outw,         lxmax = -hw + (crop_x + crop_w) * outw;
+    float lymin = -hh + crop_y * outh,         lymax = -hh + (crop_y + crop_h) * outh;
     float bx = fabsf(hw * c) + fabsf(hh * s);
     float by = fabsf(hw * s) + fabsf(hh * c);
     int minx = (int)floorf(centerX - bx), maxx = (int)ceilf(centerX + bx);
@@ -339,7 +346,7 @@ static void blit_rgba(unsigned char *dst, int dw, int dh,
             float rx = dx + 0.5f - centerX, ry = dy + 0.5f - centerY;
             float lx =  rx * c + ry * s;
             float ly = -rx * s + ry * c;
-            if (lx < -hw || lx >= hw || ly < -hh || ly >= hh) continue;
+            if (lx < lxmin || lx >= lxmax || ly < lymin || ly >= lymax) continue;
             float u = (lx + hw) / outw * sw;
             float v = (ly + hh) / outh * sh;
             float sc[4];
@@ -376,7 +383,9 @@ void jv_render_frame(jv_timeline *tl, double t,
             if (c->type == JV_CLIP_IMAGE) {
                 blit_rgba(out, ow, oh, c->u.image.rgba, c->u.image.width,
                           c->u.image.height, c->u.image.cx, c->u.image.cy,
-                          c->u.image.scale, c->u.image.rotation);
+                          c->u.image.scale, c->u.image.rotation,
+                          c->u.image.crop_x, c->u.image.crop_y,
+                          c->u.image.crop_w, c->u.image.crop_h);
             } else if (c->type == JV_CLIP_TEXT) {
                 // Size text relative to the canvas height it was authored for,
                 // unless an explicit scale was set.
@@ -384,7 +393,7 @@ void jv_render_frame(jv_timeline *tl, double t,
                          : (float)c->u.text.height / (tl->height > 0 ? tl->height : oh);
                 blit_rgba(out, ow, oh, c->u.text.rgba, c->u.text.width,
                           c->u.text.height, c->u.text.cx, c->u.text.cy, ts,
-                          c->u.text.rotation);
+                          c->u.text.rotation, 0, 0, 1, 1);
             } else if (c->type == JV_CLIP_VIDEO) {
                 if (!c->u.video.decoder && c->u.video.path)
                     c->u.video.decoder = jv_decoder_open(c->u.video.path);
@@ -394,7 +403,8 @@ void jv_render_frame(jv_timeline *tl, double t,
                     const unsigned char *frame = jv_decoder_frame_at(
                         (jv_decoder *)c->u.video.decoder, src_t, &fw, &fh);
                     blit_rgba(out, ow, oh, frame, fw, fh, c->u.video.cx,
-                              c->u.video.cy, c->u.video.scale, c->u.video.rotation);
+                              c->u.video.cy, c->u.video.scale, c->u.video.rotation,
+                              0, 0, 1, 1);
                 }
             }
         }

@@ -27,6 +27,7 @@ int main(void) {
         int w = 8, h = 8; ic->u.image.rgba = (unsigned char *)malloc(w*h*4);
         for (int i = 0; i < w*h; i++) { ic->u.image.rgba[i*4]=200; ic->u.image.rgba[i*4+1]=50; ic->u.image.rgba[i*4+2]=50; ic->u.image.rgba[i*4+3]=255; }
         ic->u.image.width = w; ic->u.image.height = h; ic->u.image.scale = 0.6f; ic->u.image.cx = 0.3f; ic->u.image.cy = 0.3f;
+        ic->u.image.crop_x = 0.25f; ic->u.image.crop_y = 0.10f; ic->u.image.crop_w = 0.5f; ic->u.image.crop_h = 0.7f;
 
         // Audio clip with a non-unity gain + synthetic PCM (saved as a WAV sidecar).
         jv_track *mt = &tl->tracks[1];
@@ -66,6 +67,8 @@ int main(void) {
                     sawImage = 1;
                     CHECK(fabs(c->u.image.scale - 0.6f) < 1e-4, "image scale restored");
                     CHECK(c->u.image.rgba != NULL, "image sidecar reloaded");
+                    CHECK(fabs(c->u.image.crop_w - 0.5f) < 1e-4 && fabs(c->u.image.crop_h - 0.7f) < 1e-4, "image crop restored");
+                    CHECK(fabs(c->u.image.crop_x - 0.25f) < 1e-4 && fabs(c->u.image.crop_y - 0.10f) < 1e-4, "crop origin restored");
                 }
             }
             CHECK(sawText && sawImage, "both clip types present");

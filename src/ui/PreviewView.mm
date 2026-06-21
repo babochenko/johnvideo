@@ -19,6 +19,14 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
     NSMutableString *_editText;    // working copy of the edited string
     BOOL             _editSelAll;  // whole-string selection (cmd+a)
     NSUInteger       _editCaret;   // caret index into _editText
+
+    // Crop (trim) mode: a dashed frame over the image selecting the visible
+    // sub-region. The clip renders full while cropping; commit writes the frame.
+    BOOL             _cropping;
+    jv_clip         *_cropClip;
+    float            _cropX, _cropY, _cropW, _cropH;   // working crop, normalized 0..1
+    int              _cropDrag;    // 0 none, 1 move, 2 corner-drag
+    int              _cropCorner;  // which corner (0=TL,1=TR,2=BR,3=BL) when resizing
 }
 
 - (BOOL)becomeFirstResponder { return YES; }
@@ -158,6 +166,67 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
 - (NSPoint)resizeHandleForClip:(jv_clip *)c { NSRect r = [self displayRectForClip:c]; return NSMakePoint(NSMaxX(r), NSMinY(r)); }
 - (NSPoint)rotateHandleForClip:(jv_clip *)c { NSRect r = [self displayRectForClip:c]; return NSMakePoint(NSMidX(r), NSMaxY(r) + 22); }
 
+// ---- Crop (trim) geometry ----
+// A clip's stored crop, normalized; zero/invalid means full (the whole image).
+static void clipCrop(jv_clip *c, float *x, float *y, float *w, float *h) {
+    jv_image *im = &c->u.image;
+    if (im->crop_w <= 0 || im->crop_h <= 0) { *x = 0; *y = 0; *w = 1; *h = 1; }
+    else { *x = im->crop_x; *y = im->crop_y; *w = im->crop_w; *h = im->crop_h; }
+}
+// Screen rect of a normalized crop within the (full-image) display rect. The
+// image is top-down (crop_y measured from the top); the view is y-up.
+- (NSRect)screenRectForCropX:(float)cx y:(float)cy w:(float)cw h:(float)ch ofClip:(jv_clip *)c {
+    NSRect dr = [self displayRectForClip:c];
+    return NSMakeRect(dr.origin.x + cx * dr.size.width,
+                      NSMaxY(dr) - (cy + ch) * dr.size.height,
+                      cw * dr.size.width, ch * dr.size.height);
+}
+// The visible region of a clip on screen (display rect reduced by its crop).
+- (NSRect)visibleRectForClip:(jv_clip *)c {
+    float x, y, w, h; clipCrop(c, &x, &y, &w, &h);
+    return [self screenRectForCropX:x y:y w:w h:h ofClip:c];
+}
+// The crop toggle button: a small square at the top-right of the visible image.
+- (NSRect)cropButtonForClip:(jv_clip *)c {
+    NSRect v = _cropping && c == _cropClip
+        ? [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:c]
+        : [self visibleRectForClip:c];
+    const CGFloat sz = 22;
+    return NSMakeRect(NSMaxX(v) - sz, NSMaxY(v) - sz, sz, sz);   // top-right corner
+}
+// Convert a screen frame back to a normalized crop of the clip's full image.
+- (void)setWorkingCropFromScreenRect:(NSRect)f clip:(jv_clip *)c {
+    NSRect dr = [self displayRectForClip:c];
+    if (dr.size.width <= 0 || dr.size.height <= 0) return;
+    float x = (f.origin.x - dr.origin.x) / dr.size.width;
+    float w = f.size.width / dr.size.width;
+    float h = f.size.height / dr.size.height;
+    float y = (NSMaxY(dr) - NSMaxY(f)) / dr.size.height;
+    // Clamp to the image and enforce a minimum size.
+    if (w < 0.05f) w = 0.05f; if (h < 0.05f) h = 0.05f;
+    if (x < 0) x = 0; if (y < 0) y = 0;
+    if (x + w > 1) x = 1 - w; if (y + h > 1) y = 1 - h;
+    _cropX = x; _cropY = y; _cropW = w; _cropH = h;
+}
+
+- (void)enterCropForClip:(jv_clip *)c {
+    [self.host recordUndo];
+    _cropping = YES; _cropClip = c;
+    clipCrop(c, &_cropX, &_cropY, &_cropW, &_cropH);   // start from the existing crop
+    // Show the whole image while cropping so the frame can be expanded again.
+    c->u.image.crop_x = 0; c->u.image.crop_y = 0; c->u.image.crop_w = 1; c->u.image.crop_h = 1;
+    [self.host refreshAll];
+}
+- (void)commitCrop {
+    if (!_cropping) return;
+    if (_cropClip) {
+        _cropClip->u.image.crop_x = _cropX; _cropClip->u.image.crop_y = _cropY;
+        _cropClip->u.image.crop_w = _cropW; _cropClip->u.image.crop_h = _cropH;
+    }
+    _cropping = NO; _cropClip = NULL; _cropDrag = 0;
+    [self.host refreshAll];
+}
+
 // Topmost visual clip active at the playhead whose rect contains p.
 - (jv_clip *)visualClipAtPoint:(NSPoint)p {
     jv_timeline *tl = [self.host timeline];
@@ -212,8 +281,26 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 
     [self.window makeFirstResponder:self];
 
-    // If a clip is selected, check its resize/rotate handles first.
     jv_clip *sel = [self.host selectedClip];
+
+    // Crop button: toggle trim mode for the selected image (top-right of it).
+    if (sel && sel->type == JV_CLIP_IMAGE && [self clipActive:sel] &&
+        NSPointInRect(p, [self cropButtonForClip:sel])) {
+        if (_cropping) [self commitCrop]; else [self enterCropForClip:sel];
+        return;
+    }
+    // While cropping: drag the dashed frame (corner = resize, interior = move).
+    if (_cropping && _cropClip) {
+        NSRect f = [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:_cropClip];
+        NSPoint corner[4] = { {NSMinX(f), NSMaxY(f)}, {NSMaxX(f), NSMaxY(f)},
+                              {NSMaxX(f), NSMinY(f)}, {NSMinX(f), NSMinY(f)} };   // TL,TR,BR,BL
+        for (int i = 0; i < 4; i++)
+            if (pt_dist(p, corner[i]) < 14) { _cropDrag = 2; _cropCorner = i; return; }
+        if (NSPointInRect(p, f)) { _cropDrag = 1; _grab = NSMakePoint(p.x - f.origin.x, p.y - f.origin.y); return; }
+        return;   // clicks elsewhere are ignored while cropping
+    }
+
+    // If a clip is selected, check its resize/rotate handles first.
     if (sel && [self clipIsVisual:sel] && [self clipActive:sel]) {
         if (pt_dist(p, [self rotateHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_ROTATE; return; }
         if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_RESIZE; return; }
@@ -245,8 +332,36 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 }
 
 - (void)mouseDragged:(NSEvent *)e {
-    if (!_dragClip || _mode == PV_NONE) return;
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+
+    // Crop frame drag (move / resize) — operates in the full-image display rect.
+    if (_cropping && _cropClip && _cropDrag) {
+        NSRect dr = [self displayRectForClip:_cropClip];
+        NSRect f = [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:_cropClip];
+        if (_cropDrag == 1) {                       // move, clamped inside the image
+            f.origin = NSMakePoint(p.x - _grab.x, p.y - _grab.y);
+            if (f.origin.x < dr.origin.x) f.origin.x = dr.origin.x;
+            if (f.origin.y < dr.origin.y) f.origin.y = dr.origin.y;
+            if (NSMaxX(f) > NSMaxX(dr)) f.origin.x = NSMaxX(dr) - f.size.width;
+            if (NSMaxY(f) > NSMaxY(dr)) f.origin.y = NSMaxY(dr) - f.size.height;
+        } else {                                    // resize: drag a corner, opposite stays put
+            CGFloat px = fmin(fmax(p.x, NSMinX(dr)), NSMaxX(dr));
+            CGFloat py = fmin(fmax(p.y, NSMinY(dr)), NSMaxY(dr));
+            CGFloat ox, oy;                          // opposite (fixed) corner
+            switch (_cropCorner) {
+                case 0: ox = NSMaxX(f); oy = NSMinY(f); break;   // TL -> BR fixed
+                case 1: ox = NSMinX(f); oy = NSMinY(f); break;   // TR -> BL
+                case 2: ox = NSMinX(f); oy = NSMaxY(f); break;   // BR -> TL
+                default: ox = NSMaxX(f); oy = NSMaxY(f); break;  // BL -> TR
+            }
+            f = NSMakeRect(fmin(px, ox), fmin(py, oy), fabs(px - ox), fabs(py - oy));
+        }
+        [self setWorkingCropFromScreenRect:f clip:_cropClip];
+        [self.host refreshAll];
+        return;
+    }
+
+    if (!_dragClip || _mode == PV_NONE) return;
     NSPoint mid = [self centerForClip:_dragClip];
 
     if (_mode == PV_MOVE) {
@@ -270,7 +385,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     [self.host refreshAll];
 }
 
-- (void)mouseUp:(NSEvent *)e { _dragClip = NULL; _mode = PV_NONE; [[NSCursor arrowCursor] set]; }
+- (void)mouseUp:(NSEvent *)e { _dragClip = NULL; _mode = PV_NONE; _cropDrag = 0; [[NSCursor arrowCursor] set]; }
 
 - (void)drawRect:(NSRect)dirty {
     [[NSColor colorWithCalibratedWhite:0.08 alpha:1.0] setFill];
@@ -325,6 +440,43 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         [[NSColor systemBlueColor] setFill];
         [[NSBezierPath bezierPathWithRect:NSMakeRect(NSMaxX(r) - 5, NSMinY(r) - 5, 10, 10)] fill];
         [gctx restoreGraphicsState];
+    }
+
+    // Crop (trim) overlay: dashed frame + dimmed exterior, plus the toggle button
+    // on the selected image. Drawn unrotated (crop is authored in image space).
+    if (sel && sel->type == JV_CLIP_IMAGE && [self clipActive:sel]) {
+        if (_cropping && _cropClip == sel) {
+            NSRect dr = [self displayRectForClip:sel];
+            NSRect f  = [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:sel];
+            // Dim everything outside the frame within the image footprint.
+            [[NSColor colorWithWhite:0 alpha:0.45] setFill];
+            NSRectFill(NSMakeRect(dr.origin.x, dr.origin.y, dr.size.width, NSMinY(f) - dr.origin.y));         // below
+            NSRectFill(NSMakeRect(dr.origin.x, NSMaxY(f), dr.size.width, NSMaxY(dr) - NSMaxY(f)));            // above
+            NSRectFill(NSMakeRect(dr.origin.x, NSMinY(f), NSMinX(f) - dr.origin.x, f.size.height));           // left
+            NSRectFill(NSMakeRect(NSMaxX(f), NSMinY(f), NSMaxX(dr) - NSMaxX(f), f.size.height));              // right
+            NSBezierPath *dash = [NSBezierPath bezierPathWithRect:f];
+            CGFloat pat[2] = {6, 4}; [dash setLineDash:pat count:2 phase:0];
+            dash.lineWidth = 1.5; [[NSColor whiteColor] setStroke]; [dash stroke];
+            for (int i = 0; i < 4; i++) {   // corner knobs
+                NSPoint cpt[4] = { {NSMinX(f),NSMaxY(f)}, {NSMaxX(f),NSMaxY(f)}, {NSMaxX(f),NSMinY(f)}, {NSMinX(f),NSMinY(f)} };
+                [[NSColor whiteColor] setFill];
+                [[NSBezierPath bezierPathWithRect:NSMakeRect(cpt[i].x - 4, cpt[i].y - 4, 8, 8)] fill];
+            }
+        }
+        // Toggle button (top-right of the visible image): a small crop glyph.
+        NSRect brect = [self cropButtonForClip:sel];
+        [[NSColor colorWithWhite:0 alpha:0.6] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:brect xRadius:4 yRadius:4] fill];
+        [(_cropping ? [NSColor systemYellowColor] : [NSColor whiteColor]) setStroke];
+        NSBezierPath *g = [NSBezierPath bezierPath]; g.lineWidth = 1.5;
+        NSRect gi = NSInsetRect(brect, 6, 6);
+        [g moveToPoint:NSMakePoint(NSMinX(gi), NSMaxY(gi))];   // ⌐ + ¬ crop marks
+        [g lineToPoint:NSMakePoint(NSMinX(gi), NSMinY(gi))];
+        [g lineToPoint:NSMakePoint(NSMaxX(gi), NSMinY(gi))];
+        [g moveToPoint:NSMakePoint(NSMaxX(gi), NSMinY(gi))];
+        [g lineToPoint:NSMakePoint(NSMaxX(gi), NSMaxY(gi))];
+        [g lineToPoint:NSMakePoint(NSMinX(gi), NSMaxY(gi))];
+        [g stroke];
     }
 
     // Text-edit caret (+ select-all highlight) on the edited clip.
@@ -555,6 +707,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     unichar k = chars.length ? [chars characterAtIndex:0] : 0;
     unichar lk = (k >= 'A' && k <= 'Z') ? k + 32 : k;
     NSEventModifierFlags m = e.modifierFlags;
+    if (_cropping && k == 0x1B) { [self commitCrop]; return; }   // Esc approves the crop
     if (m & NSEventModifierFlagCommand) {
         if (lk == 'a') { [self.host selectAllClips]; return; }        // select all clips
         if (k == NSLeftArrowFunctionKey)  { [self.host jumpStartMarksEnd:-1]; return; }
@@ -668,4 +821,5 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 - (NSUInteger)editCaret { return _editCaret; }
 - (BOOL)editSelAll { return _editSelAll; }
 - (void)layoutForTest { _videoRect = [self fitRect]; }
+- (BOOL)isCropping { return _cropping; }
 @end

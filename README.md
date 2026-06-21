@@ -197,6 +197,7 @@ Inserted **image and text clips are 1 s** long. Images (paste **and** Import) an
 
 - **Move** a clip by dragging; sticky to canvas **edges** and **center**.
 - **Resize** via the bottom-right handle; **rotate** via the top handle (snaps to multiples of 90°). Selection chrome rotates with the clip.
+- **Crop (trim) an image**: with an image selected, click the **crop button at its top-right**. A dashed frame appears over the full image — drag its interior to move it, drag a corner to resize. **Esc or the crop button again** approves. Crop is **non-destructive** (it reduces the displayed area only, never alters the bitmap), honored identically by preview and export, and saved in the project (`cropx/cropy/cropw/croph` on the image clip).
 - **Right-click / double-click** to add or edit text in place.
 
 ---

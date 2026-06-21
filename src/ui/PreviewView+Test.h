@@ -7,4 +7,6 @@
 - (NSUInteger)editCaret;     // caret index into editText
 - (BOOL)editSelAll;          // whole-string selection active
 - (void)layoutForTest;       // compute _videoRect without a draw cycle (canvas hit-testing)
+- (BOOL)isCropping;
+- (NSRect)cropButtonForClip:(jv_clip *)c;   // screen rect of the trim toggle button
 @end

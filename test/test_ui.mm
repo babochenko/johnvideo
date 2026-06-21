@@ -457,6 +457,65 @@ static void test_audio_gain_affects_mix(void) {
     CHECK(fabs(full - 0.4f) < 1e-4, "unity gain passes the sample through");
 }
 
+// ---- Image crop (trim) ----
+static void test_compositor_honors_crop(void) {
+    CASE("compositor draws only the cropped sub-region");
+    // White image filling the canvas; crop to the right half -> left half stays black.
+    jv_timeline *tl = jv_timeline_create(100, 100, 30.0);
+    jv_timeline_add_track(tl, JV_TRACK_VISUAL, "V");
+    jv_clip *c = jv_track_add_clip(&tl->tracks[0], JV_CLIP_IMAGE, 0, 1);
+    int w = 100, h = 100;
+    c->u.image.rgba = (unsigned char *)malloc(w * h * 4);
+    for (int i = 0; i < w * h * 4; i++) c->u.image.rgba[i] = 255;   // opaque white
+    c->u.image.width = w; c->u.image.height = h;
+    c->u.image.cx = 0.5f; c->u.image.cy = 0.5f; c->u.image.scale = 1.0f;
+    c->u.image.crop_x = 0.5f; c->u.image.crop_y = 0.0f; c->u.image.crop_w = 0.5f; c->u.image.crop_h = 1.0f;
+
+    unsigned char *out = (unsigned char *)malloc(100 * 100 * 4);
+    jv_render_frame(tl, 0.0, out, 100, 100);
+    // Sample a left-half pixel (should be black) and a right-half pixel (white).
+    unsigned char *left  = &out[(50 * 100 + 25) * 4];
+    unsigned char *right = &out[(50 * 100 + 75) * 4];
+    CHECK(left[0] < 10, "left (cropped-out) half is black");
+    CHECK(right[0] > 245, "right (kept) half is white");
+    free(out); jv_timeline_destroy(tl);
+}
+
+static void test_crop_button_enters_and_commits(void) {
+    CASE("crop button enters trim mode; drag + button commits a crop");
+    AppDelegate *app = bootWithClip(0, 0, NULL);
+    [app timeline]->tracks[0].clip_count = 0;
+    jv_clip *c = addCanvasImage(app, 0, 5, 0.5f, 0.5f, 0.8f);   // big enough to hit-test
+    [app seekTo:1.0];
+    [H(app) selectTrack:NULL clip:c];
+    PreviewView *pv = [app pvView];
+    [pv layoutForTest];
+
+    NSRect btn = [pv cropButtonForClip:c];
+    NSPoint btnC = NSMakePoint(NSMidX(btn), NSMidY(btn));
+    click(pv, btnC, 0);                                  // enter crop mode
+    CHECK([pv isCropping], "crop mode entered");
+    CHECK(c->u.image.crop_w >= 0.999f, "clip shows full image while cropping");
+
+    // Drag the top-left corner of the (currently-full) frame inward.
+    NSRect dr = [pv cropButtonForClip:c];   // recompute after entering (frame=full)
+    (void)dr;
+    [pv layoutForTest];
+    // Full-image display rect corners: drag TL corner toward the center.
+    // Recompute the frame: full image == display rect.
+    // Approximate TL via the preview bounds-derived display rect.
+    NSRect vb = pv.bounds;   // image cx=cy=0.5 scale 0.8 -> centered
+    CGFloat ih = 0.8f * vb.size.height, iw = ih * 160.0 / 90.0;
+    NSPoint mid = NSMakePoint(NSMidX(vb), NSMidY(vb));
+    NSPoint tl = NSMakePoint(mid.x - iw/2, mid.y + ih/2);          // top-left (screen y-up)
+    drag(pv, tl, NSMakePoint(mid.x, mid.y), 0);                    // shrink to ~bottom-right quadrant
+
+    NSRect btn2 = [pv cropButtonForClip:c];
+    click(pv, NSMakePoint(NSMidX(btn2), NSMidY(btn2)), 0);         // commit
+    CHECK(![pv isCropping], "crop mode committed/exited");
+    CHECK(c->u.image.crop_w < 0.9f && c->u.image.crop_h < 0.9f, "a smaller crop was applied");
+}
+
 // ---- In-place text editing (notes-app caret semantics) ----
 // Boot, add a text clip (begins editing with "Text" selected), then replace it
 // with a known multi-line/multi-word string. Caret ends at the document end.
@@ -918,6 +977,8 @@ int main(void) {
         test_pointer_zoom_anchors_under_cursor();
         test_audio_volume_gain();
         test_audio_gain_affects_mix();
+        test_compositor_honors_crop();
+        test_crop_button_enters_and_commits();
 
         // Project persistence
         test_reopen_last_project();

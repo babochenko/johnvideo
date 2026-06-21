@@ -88,8 +88,12 @@ BOOL jv_project_save(jv_timeline *tl, NSString *path) {
             switch (c->type) {
                 case JV_CLIP_IMAGE: {
                     jv_image *im = &c->u.image;
-                    fprintf(f, "  clip image start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f\n",
+                    fprintf(f, "  clip image start=%.4f dur=%.4f in=%.4f cx=%.4f cy=%.4f scale=%.4f rot=%.4f",
                             c->start_time, c->duration, c->in_offset, im->cx, im->cy, im->scale, im->rotation);
+                    if (im->crop_w > 0 && (im->crop_x > 0 || im->crop_y > 0 || im->crop_w < 1 || im->crop_h < 1))
+                        fprintf(f, " cropx=%.4f cropy=%.4f cropw=%.4f croph=%.4f",
+                                im->crop_x, im->crop_y, im->crop_w, im->crop_h);
+                    fprintf(f, "\n");
                     BOOL hasFile = im->path && [fm fileExistsAtPath:@(im->path)];
                     if (hasFile) fprintf(f, "    src %s\n", im->path);
                     else {
@@ -215,6 +219,8 @@ jv_timeline *jv_project_load(NSString *path) {
                 curClip->in_offset = io;
                 curClip->u.image.cx = cx; curClip->u.image.cy = cy;
                 curClip->u.image.scale = sc; curClip->u.image.rotation = ro;
+                curClip->u.image.crop_x = pf(s, "cropx", 0); curClip->u.image.crop_y = pf(s, "cropy", 0);
+                curClip->u.image.crop_w = pf(s, "cropw", 1); curClip->u.image.crop_h = pf(s, "croph", 1);
             } else if (strcmp(type, "text") == 0) {
                 curClip = jv_track_add_clip(curTrack, JV_CLIP_TEXT, st, du);
                 curClip->in_offset = io;
