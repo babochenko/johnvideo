@@ -516,6 +516,24 @@ static void test_crop_button_enters_and_commits(void) {
     CHECK(c->u.image.crop_w < 0.9f && c->u.image.crop_h < 0.9f, "a smaller crop was applied");
 }
 
+static void test_crop_shrinks_hit_area(void) {
+    CASE("after cropping, only the visible area is selectable/draggable");
+    AppDelegate *app = bootWithClip(0, 0, NULL);
+    [app timeline]->tracks[0].clip_count = 0;
+    jv_clip *c = addCanvasImage(app, 0, 5, 0.5f, 0.5f, 0.8f);
+    c->u.image.crop_x = 0.5f; c->u.image.crop_y = 0; c->u.image.crop_w = 0.5f; c->u.image.crop_h = 1;  // right half
+    [app seekTo:1.0];
+    PreviewView *pv = [app pvView];
+    [pv layoutForTest];
+    NSRect vb = pv.bounds;
+    CGFloat ih = 0.8f * vb.size.height, iw = ih * 160.0 / 90.0;
+    CGFloat fl = NSMidX(vb) - iw / 2, midy = NSMidY(vb);
+    click(pv, NSMakePoint(fl + 0.25 * iw, midy), 0);   // trimmed-away (left) half
+    CHECK([app selectedClip] == NULL, "click in the trimmed area does not select");
+    click(pv, NSMakePoint(fl + 0.75 * iw, midy), 0);   // visible (right) half
+    CHECK([app selectedClip] == c, "click in the visible area selects");
+}
+
 // ---- In-place text editing (notes-app caret semantics) ----
 // Boot, add a text clip (begins editing with "Text" selected), then replace it
 // with a known multi-line/multi-word string. Caret ends at the document end.
@@ -998,6 +1016,7 @@ int main(void) {
         test_audio_gain_affects_mix();
         test_compositor_honors_crop();
         test_crop_button_enters_and_commits();
+        test_crop_shrinks_hit_area();
 
         // Project persistence
         test_reopen_last_project();

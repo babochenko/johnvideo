@@ -125,8 +125,9 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
                        NSMaxY(_videoRect) - ctr.y * _videoRect.size.height);
 }
 
-// On-screen (unrotated) rect of a visual clip within _videoRect.
-- (NSRect)displayRectForClip:(jv_clip *)c {
+// On-screen (unrotated) rect of the FULL image footprint (the whole bitmap,
+// ignoring crop) within _videoRect. Crop mapping/resize math work in this space.
+- (NSRect)imageFootprintForClip:(jv_clip *)c {
     NSPoint ctr; float sw = 0, sh = 0;
     float scale = [self clip:c center:&ctr srcW:&sw srcH:&sh];
     if (scale <= 0 || sw <= 0 || sh <= 0) return NSZeroRect;
@@ -134,6 +135,14 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
     CGFloat w = h * sw / sh;
     NSPoint mid = [self centerForClip:c];
     return NSMakeRect(mid.x - w / 2, mid.y - h / 2, w, h);
+}
+
+// On-screen rect used for selection chrome, hit-testing, and handles. For a
+// cropped image this is the VISIBLE (trimmed) region, so the frame and the
+// draggable area match what's actually shown; otherwise the full footprint.
+- (NSRect)displayRectForClip:(jv_clip *)c {
+    if (c && c->type == JV_CLIP_IMAGE) return [self visibleRectForClip:c];
+    return [self imageFootprintForClip:c];
 }
 
 - (float)rotationForClip:(jv_clip *)c {
@@ -177,7 +186,7 @@ static void clipCrop(jv_clip *c, float *x, float *y, float *w, float *h) {
 // Screen rect of a normalized crop within the (full-image) display rect. The
 // image is top-down (crop_y measured from the top); the view is y-up.
 - (NSRect)screenRectForCropX:(float)cx y:(float)cy w:(float)cw h:(float)ch ofClip:(jv_clip *)c {
-    NSRect dr = [self displayRectForClip:c];
+    NSRect dr = [self imageFootprintForClip:c];
     return NSMakeRect(dr.origin.x + cx * dr.size.width,
                       NSMaxY(dr) - (cy + ch) * dr.size.height,
                       cw * dr.size.width, ch * dr.size.height);
@@ -197,7 +206,7 @@ static void clipCrop(jv_clip *c, float *x, float *y, float *w, float *h) {
 }
 // Convert a screen frame back to a normalized crop of the clip's full image.
 - (void)setWorkingCropFromScreenRect:(NSRect)f clip:(jv_clip *)c {
-    NSRect dr = [self displayRectForClip:c];
+    NSRect dr = [self imageFootprintForClip:c];
     if (dr.size.width <= 0 || dr.size.height <= 0) return;
     float x = (f.origin.x - dr.origin.x) / dr.size.width;
     float w = f.size.width / dr.size.width;
@@ -342,7 +351,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
 
     // Crop frame drag (move / resize) — operates in the full-image display rect.
     if (_cropping && _cropClip && _cropDrag) {
-        NSRect dr = [self displayRectForClip:_cropClip];
+        NSRect dr = [self imageFootprintForClip:_cropClip];
         NSRect f = [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:_cropClip];
         if (_cropDrag == 1) {                       // move, clamped inside the image
             f.origin = NSMakePoint(p.x - _grab.x, p.y - _grab.y);
@@ -377,17 +386,24 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         n = [self snapCenter:n forClip:_dragClip];   // sticky to canvas edges/center
         [self setClip:_dragClip centerX:n.x y:n.y];
     } else if (_mode == PV_RESIZE) {
-        // Resize anchored at the top-left corner: scale follows the pointer's
-        // distance below the anchor, then recenter so that corner stays put.
+        // Resize anchored at the visible rect's top-left corner. Scale by the
+        // ratio of new to old visible height, then shift the clip so the
+        // anchored corner holds (works whether or not the image is cropped).
+        NSRect vis = [self displayRectForClip:_dragClip];
         CGFloat newH = _resizeAnchor.y - p.y;
         if (newH < 4) newH = 4;
-        [self setScale:(float)(newH / _videoRect.size.height) forClip:_dragClip];
-        NSRect r = [self displayRectForClip:_dragClip];   // size after the (clamped) scale
-        CGFloat mx = _resizeAnchor.x + r.size.width / 2;
-        CGFloat my = _resizeAnchor.y - r.size.height / 2;
+        CGFloat oldH = vis.size.height > 1 ? vis.size.height : 1;
+        NSPoint ctr; float sw = 0, sh = 0;
+        float curScale = [self clip:_dragClip center:&ctr srcW:&sw srcH:&sh];
+        [self setScale:(float)(curScale * newH / oldH) forClip:_dragClip];
+        NSRect vis2 = [self displayRectForClip:_dragClip];   // after the (clamped) scale
+        CGFloat dx = _resizeAnchor.x - NSMinX(vis2);
+        CGFloat dy = _resizeAnchor.y - NSMaxY(vis2);
+        NSPoint mid = [self centerForClip:_dragClip];
+        mid.x += dx; mid.y += dy;
         [self setClip:_dragClip
-              centerX:(float)((mx - _videoRect.origin.x) / _videoRect.size.width)
-                    y:(float)((NSMaxY(_videoRect) - my) / _videoRect.size.height)];
+              centerX:(float)((mid.x - _videoRect.origin.x) / _videoRect.size.width)
+                    y:(float)((NSMaxY(_videoRect) - mid.y) / _videoRect.size.height)];
     } else if (_mode == PV_ROTATE) {
         // Clockwise bearing from straight-up = 0, sticky to multiples of 90°.
         float ang = (float)atan2(p.x - mid.x, p.y - mid.y);
@@ -424,9 +440,10 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     }
     free(rgba);
 
-    // Selection outline + resize/rotate handles — only when the clip is visible now.
+    // Selection outline + resize/rotate handles — only when the clip is visible now
+    // (suppressed while cropping that clip; the crop overlay stands in).
     jv_clip *sel = [self.host selectedClip];
-    if (sel && [self clipIsVisual:sel] && [self clipActive:sel]) {
+    if (sel && [self clipIsVisual:sel] && [self clipActive:sel] && !(_cropping && _cropClip == sel)) {
         NSRect r = [self displayRectForClip:sel];
         NSPoint mid = NSMakePoint(NSMidX(r), NSMidY(r));
         NSGraphicsContext *gctx = [NSGraphicsContext currentContext];
@@ -460,7 +477,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     // on the selected image. Drawn unrotated (crop is authored in image space).
     if (sel && sel->type == JV_CLIP_IMAGE && [self clipActive:sel]) {
         if (_cropping && _cropClip == sel) {
-            NSRect dr = [self displayRectForClip:sel];
+            NSRect dr = [self imageFootprintForClip:sel];
             NSRect f  = [self screenRectForCropX:_cropX y:_cropY w:_cropW h:_cropH ofClip:sel];
             // Dim everything outside the frame within the image footprint.
             [[NSColor colorWithWhite:0 alpha:0.45] setFill];
