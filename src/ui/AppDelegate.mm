@@ -127,7 +127,6 @@ static const CGFloat kNotifH = 30;
     NSMutableArray<NSValue *> *_redo;
     jv_clip            _clipboard;       // copied clip (deep)
     BOOL               _hasClipboard;
-    NSInteger          _clipboardChange;  // system pasteboard changeCount at internal-copy time
     NSInteger          _focusTrack;      // current track for h/l/j/k navigation (-1 = none)
     NSString          *_projectPath;     // current .jvp path (Cmd+S saves here without asking)
     BOOL               _bladeMode;       // modal blade tool
@@ -864,15 +863,10 @@ static void clone_clip_payload(jv_clip *dst, const jv_clip *src) {
     if (_hasClipboard) jv_clip_free_payload(&_clipboard);
     clone_clip_payload(&_clipboard, _selected);
     _hasClipboard = YES;
-    _clipboardChange = [NSPasteboard generalPasteboard].changeCount;   // remember "freshness"
 }
 
 - (BOOL)pasteClipAtPlayhead {
     if (!_hasClipboard) return NO;
-    // If anything was copied elsewhere (e.g. an image in a browser) after our
-    // internal clip copy, the system pasteboard is newer — defer to it so the
-    // caller falls through to pasting that instead of the stale internal clip.
-    if ([NSPasteboard generalPasteboard].changeCount != _clipboardChange) return NO;
     // Paste onto the first track whose kind matches the clipboard clip.
     BOOL wantAudio = (_clipboard.type == JV_CLIP_AUDIO);
     jv_track *dst = [self firstTrackOfKind:wantAudio ? JV_TRACK_AUDIO : JV_TRACK_VISUAL];
