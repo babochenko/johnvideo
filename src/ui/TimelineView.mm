@@ -204,6 +204,10 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
     NSDictionary *labelAttrs = @{ NSFontAttributeName: [NSFont boldSystemFontOfSize:11],
                                   NSForegroundColorAttributeName: [NSColor whiteColor] };
 
+    // Clip track content to below the ruler so it scrolls *under* the (sticky)
+    // ruler instead of painting over it when there are more tracks than fit.
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(NSMakeRect(0, kRulerHeight, self.bounds.size.width, self.bounds.size.height - kRulerHeight));
     for (size_t i = 0; i < tl->track_count; i++) {
         jv_track *t = &tl->tracks[i];
         CGFloat ty = [self yForTrack:i];
@@ -257,6 +261,7 @@ typedef enum { DRAG_NONE, DRAG_SCRUB, DRAG_MOVE, DRAG_TRIM, DRAG_TRIM_LEFT, DRAG
             if (cl) [cl drawAtPoint:NSMakePoint(r.origin.x + 6, ty + 6) withAttributes:tick];
         }
     }
+    [NSGraphicsContext restoreGraphicsState];
 
     // Markers (yellow lines + a flag in the ruler).
     for (size_t i = 0; i < tl->marker_count; i++) {
