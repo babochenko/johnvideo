@@ -695,6 +695,20 @@ static void test_copy_paste_clip(void) {
     CHECK(tl->tracks[0].clip_count == 2, "a second clip now exists");
 }
 
+static void test_clipboard_prefers_newer_system_copy(void) {
+    CASE("a newer system copy wins over the internal clip clipboard");
+    jv_clip *c; AppDelegate *app = bootWithClip(1.0, 1.0, &c);
+    TimelineView *tv = [app tlView];
+    click(tv, NSMakePoint(xForTime(1.5, [app pps]), yForTrack(0)), 0);   // select
+    [H(app) copySelectedClip];                                           // internal copy
+    CHECK([H(app) pasteClipAtPlayhead], "internal clip pastes right after copying it");
+    // Simulate copying elsewhere (e.g. an image in a browser): bump the pasteboard.
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:@"newer" forType:NSPasteboardTypeString];
+    CHECK(![H(app) pasteClipAtPlayhead], "defers to the newer system pasteboard");
+}
+
 // ---- Tracks: add / remove / reorder ----
 static void test_add_remove_track(void) {
     CASE("add and remove tracks");
@@ -966,6 +980,7 @@ int main(void) {
         // History / clipboard
         test_undo_redo();
         test_copy_paste_clip();
+        test_clipboard_prefers_newer_system_copy();
 
         // Tracks / scroll / blade / group
         test_add_remove_track();
