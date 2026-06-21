@@ -13,6 +13,7 @@ static CGFloat pt_dist(NSPoint a, NSPoint b);   // defined below
     NSRect           _videoRect;   // where the composited frame is drawn (letterboxed)
     jv_clip         *_dragClip;    // visual clip being dragged on the canvas
     NSPoint          _grab;        // pointer offset from the clip center at grab time
+    NSPoint          _resizeAnchor;// fixed top-left corner during a resize drag
     pv_mode          _mode;
     BOOL             _editing;     // typing into a text clip in place
     jv_clip         *_editClip;    // text clip being edited
@@ -303,7 +304,12 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
     // If a clip is selected, check its resize/rotate handles first.
     if (sel && [self clipIsVisual:sel] && [self clipActive:sel]) {
         if (pt_dist(p, [self rotateHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_ROTATE; return; }
-        if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) { [self.host recordUndo]; _dragClip = sel; _mode = PV_RESIZE; return; }
+        if (pt_dist(p, [self resizeHandleForClip:sel]) < 12) {
+            [self.host recordUndo]; _dragClip = sel; _mode = PV_RESIZE;
+            NSRect r = [self displayRectForClip:sel];
+            _resizeAnchor = NSMakePoint(NSMinX(r), NSMaxY(r));   // anchor the top-left corner
+            return;
+        }
     }
 
     _dragClip = [self visualClipAtPoint:p];
@@ -371,9 +377,17 @@ static CGFloat pt_dist(NSPoint a, NSPoint b) { return hypot(a.x - b.x, a.y - b.y
         n = [self snapCenter:n forClip:_dragClip];   // sticky to canvas edges/center
         [self setClip:_dragClip centerX:n.x y:n.y];
     } else if (_mode == PV_RESIZE) {
-        // Scale so the clip half-height follows the pointer's vertical distance.
-        CGFloat halfH = fabs(p.y - mid.y);
-        [self setScale:(float)(2 * halfH / _videoRect.size.height) forClip:_dragClip];
+        // Resize anchored at the top-left corner: scale follows the pointer's
+        // distance below the anchor, then recenter so that corner stays put.
+        CGFloat newH = _resizeAnchor.y - p.y;
+        if (newH < 4) newH = 4;
+        [self setScale:(float)(newH / _videoRect.size.height) forClip:_dragClip];
+        NSRect r = [self displayRectForClip:_dragClip];   // size after the (clamped) scale
+        CGFloat mx = _resizeAnchor.x + r.size.width / 2;
+        CGFloat my = _resizeAnchor.y - r.size.height / 2;
+        [self setClip:_dragClip
+              centerX:(float)((mx - _videoRect.origin.x) / _videoRect.size.width)
+                    y:(float)((NSMaxY(_videoRect) - my) / _videoRect.size.height)];
     } else if (_mode == PV_ROTATE) {
         // Clockwise bearing from straight-up = 0, sticky to multiples of 90°.
         float ang = (float)atan2(p.x - mid.x, p.y - mid.y);

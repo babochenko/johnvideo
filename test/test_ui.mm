@@ -867,6 +867,10 @@ static void test_canvas_resize_clip(void) {
     float before = c->u.image.scale;
     drag(pv, handle, NSMakePoint(handle.x, handle.y - 80), 0);   // pull down -> bigger
     CHECK(c->u.image.scale > before, "scale increased");
+    // Anchored at the top-left corner: growing pushes the center toward the
+    // bottom-right (cy is top-down), instead of staying put at 0.5/0.5.
+    CHECK(c->u.image.cx > 0.5f, "center moved right (left edge anchored)");
+    CHECK(c->u.image.cy > 0.5f, "center moved down (top edge anchored)");
 }
 
 static void test_canvas_rotate_snaps_90(void) {
